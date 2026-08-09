@@ -1,0 +1,386 @@
+{
+  "info": {
+    "_postman_id": "pulse-event-api-collection",
+    "name": "Pulse Event API",
+    "description": "Collection for testing Pulse Event API - Event ingestion endpoint with multiple event types",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "item": [
+    {
+      "name": "System",
+      "item": [
+        {
+          "name": "Health Check",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test(\"Status code is 200\", function () {",
+                  "    pm.response.to.have.status(200);",
+                  "});",
+                  "",
+                  "pm.test(\"Response has status field\", function () {",
+                  "    var jsonData = pm.response.json();",
+                  "    pm.expect(jsonData).to.have.property('status');",
+                  "    pm.expect(jsonData.status).to.equal('ok');",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/health",
+              "host": ["{{baseUrl}}"],
+              "path": ["health"]
+            },
+            "description": "Check if the API is healthy and running"
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "Events",
+      "item": [
+        {
+          "name": "Page View Event",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test(\"Status code is 200\", function () {",
+                  "    pm.response.to.have.status(200);",
+                  "});",
+                  "",
+                  "pm.test(\"Response has event_id\", function () {",
+                  "    var jsonData = pm.response.json();",
+                  "    pm.expect(jsonData).to.have.property('event_id');",
+                  "    pm.expect(jsonData.event_id).to.be.a('string');",
+                  "    pm.environment.set('lastEventId', jsonData.event_id);",
+                  "});",
+                  "",
+                  "pm.test(\"Response has status\", function () {",
+                  "    var jsonData = pm.response.json();",
+                  "    pm.expect(jsonData).to.have.property('status');",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            },
+            {
+              "listen": "prerequest",
+              "script": {
+                "exec": [
+                  "pm.environment.set('timestamp', new Date().toISOString());"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json",
+                "type": "text"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"type\": \"page_view\",\n  \"version\": 1,\n  \"source\": \"web\",\n  \"user_id\": \"{{userId}}\",\n  \"anonymous_id\": \"{{anonymousId}}\",\n  \"session_id\": \"{{sessionId}}\",\n  \"timestamp\": \"{{timestamp}}\",\n  \"properties\": {\n    \"page\": \"/products\",\n    \"device\": \"desktop\"\n  }\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/v1/events",
+              "host": ["{{baseUrl}}"],
+              "path": ["v1", "events"]
+            },
+            "description": "Submit a page view event"
+          },
+          "response": []
+        },
+        {
+          "name": "Purchase Event",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test(\"Status code is 200\", function () {",
+                  "    pm.response.to.have.status(200);",
+                  "});",
+                  "",
+                  "pm.test(\"Response has event_id\", function () {",
+                  "    var jsonData = pm.response.json();",
+                  "    pm.expect(jsonData).to.have.property('event_id');",
+                  "});",
+                  "",
+                  "pm.test(\"Response status is accepted\", function () {",
+                  "    var jsonData = pm.response.json();",
+                  "    pm.expect(jsonData.status).to.equal('accepted');",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            },
+            {
+              "listen": "prerequest",
+              "script": {
+                "exec": [
+                  "pm.environment.set('timestamp', new Date().toISOString());",
+                  "pm.environment.set('orderId', 'ORD-' + new Date().getTime());"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json",
+                "type": "text"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"type\": \"purchase\",\n  \"version\": 1,\n  \"source\": \"web\",\n  \"user_id\": \"{{userId}}\",\n  \"anonymous_id\": \"{{anonymousId}}\",\n  \"session_id\": \"{{sessionId}}\",\n  \"timestamp\": \"{{timestamp}}\",\n  \"properties\": {\n    \"order_id\": \"{{orderId}}\",\n    \"amount\": 99.99,\n    \"currency\": \"USD\"\n  }\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/v1/events",
+              "host": ["{{baseUrl}}"],
+              "path": ["v1", "events"]
+            },
+            "description": "Submit a purchase event"
+          },
+          "response": []
+        },
+        {
+          "name": "Search Event",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test(\"Status code is 200\", function () {",
+                  "    pm.response.to.have.status(200);",
+                  "});",
+                  "",
+                  "pm.test(\"Response has event_id\", function () {",
+                  "    var jsonData = pm.response.json();",
+                  "    pm.expect(jsonData).to.have.property('event_id');",
+                  "});",
+                  "",
+                  "pm.test(\"Response has status field\", function () {",
+                  "    var jsonData = pm.response.json();",
+                  "    pm.expect(jsonData).to.have.property('status');",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            },
+            {
+              "listen": "prerequest",
+              "script": {
+                "exec": [
+                  "pm.environment.set('timestamp', new Date().toISOString());"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json",
+                "type": "text"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"type\": \"search\",\n  \"version\": 1,\n  \"source\": \"web\",\n  \"user_id\": \"{{userId}}\",\n  \"anonymous_id\": \"{{anonymousId}}\",\n  \"session_id\": \"{{sessionId}}\",\n  \"timestamp\": \"{{timestamp}}\",\n  \"properties\": {\n    \"keyword\": \"golang event tracking\",\n    \"result_count\": 42\n  }\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/v1/events",
+              "host": ["{{baseUrl}}"],
+              "path": ["v1", "events"]
+            },
+            "description": "Submit a search event"
+          },
+          "response": []
+        },
+        {
+          "name": "Page View Event (Mobile)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test(\"Status code is 200\", function () {",
+                  "    pm.response.to.have.status(200);",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            },
+            {
+              "listen": "prerequest",
+              "script": {
+                "exec": [
+                  "pm.environment.set('timestamp', new Date().toISOString());"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json",
+                "type": "text"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"type\": \"page_view\",\n  \"version\": 1,\n  \"source\": \"mobile\",\n  \"user_id\": \"{{userId}}\",\n  \"anonymous_id\": \"{{anonymousId}}\",\n  \"session_id\": \"{{sessionId}}\",\n  \"timestamp\": \"{{timestamp}}\",\n  \"properties\": {\n    \"page\": \"/home\",\n    \"device\": \"mobile\"\n  }\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/v1/events",
+              "host": ["{{baseUrl}}"],
+              "path": ["v1", "events"]
+            },
+            "description": "Submit a page view event from mobile source"
+          },
+          "response": []
+        },
+        {
+          "name": "Purchase Event (High Value)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test(\"Status code is 200\", function () {",
+                  "    pm.response.to.have.status(200);",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            },
+            {
+              "listen": "prerequest",
+              "script": {
+                "exec": [
+                  "pm.environment.set('timestamp', new Date().toISOString());",
+                  "pm.environment.set('orderId', 'ORD-' + new Date().getTime() + '-PREMIUM');"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json",
+                "type": "text"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"type\": \"purchase\",\n  \"version\": 1,\n  \"source\": \"web\",\n  \"user_id\": \"{{userId}}\",\n  \"anonymous_id\": \"{{anonymousId}}\",\n  \"session_id\": \"{{sessionId}}\",\n  \"timestamp\": \"{{timestamp}}\",\n  \"properties\": {\n    \"order_id\": \"{{orderId}}\",\n    \"amount\": 599.99,\n    \"currency\": \"USD\"\n  }\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/v1/events",
+              "host": ["{{baseUrl}}"],
+              "path": ["v1", "events"]
+            },
+            "description": "Submit a high-value purchase event"
+          },
+          "response": []
+        }
+      ]
+    }
+  ],
+  "event": [
+    {
+      "listen": "prerequest",
+      "script": {
+        "type": "text/javascript",
+        "exec": [
+          "// Initialize variables if they don't exist",
+          "if (!pm.environment.get('baseUrl')) {",
+          "    pm.environment.set('baseUrl', 'http://localhost:8080');",
+          "}",
+          "if (!pm.environment.get('userId')) {",
+          "    pm.environment.set('userId', 'user_123');",
+          "}",
+          "if (!pm.environment.get('anonymousId')) {",
+          "    pm.environment.set('anonymousId', 'anon_456');",
+          "}",
+          "if (!pm.environment.get('sessionId')) {",
+          "    pm.environment.set('sessionId', 'session_789');",
+          "}"
+        ]
+      }
+    },
+    {
+      "listen": "test",
+      "script": {
+        "type": "text/javascript",
+        "exec": [
+          "// Global tests"
+        ]
+      }
+    }
+  ],
+  "variable": [
+    {
+      "key": "baseUrl",
+      "value": "http://localhost:8080",
+      "type": "string"
+    },
+    {
+      "key": "userId",
+      "value": "user_123",
+      "type": "string"
+    },
+    {
+      "key": "anonymousId",
+      "value": "anon_456",
+      "type": "string"
+    },
+    {
+      "key": "sessionId",
+      "value": "session_789",
+      "type": "string"
+    },
+    {
+      "key": "timestamp",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "lastEventId",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "orderId",
+      "value": "",
+      "type": "string"
+    }
+  ]
+}

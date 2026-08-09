@@ -1,0 +1,278 @@
+openapi: 3.0.0
+info:
+  title: Pulse Event API
+  description: Event ingestion API for tracking user events (page views, purchases, searches, etc.)
+  version: 1.0.0
+  contact:
+    name: API Support
+    url: https://github.com/s7venking/pulse
+  license:
+    name: MIT
+
+servers:
+  - url: http://localhost:8080
+    description: Local development server
+  - url: http://localhost:3000
+    description: Alternative port
+  - url: https://api.example.com
+    description: Production server (update with actual URL)
+
+paths:
+  /health:
+    get:
+      summary: Health check endpoint
+      description: Returns the health status of the API
+      operationId: getHealth
+      tags:
+        - System
+      responses:
+        "200":
+          description: API is healthy
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    example: "ok"
+              example:
+                status: "ok"
+
+  /v1/events:
+    post:
+      summary: Ingest an event
+      description: Submit an event to the Pulse Event API. Supports multiple event types with specific schemas.
+      operationId: ingestEvent
+      tags:
+        - Events
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/IngestEventRequest"
+            examples:
+              pageViewExample:
+                summary: Page View Event
+                value:
+                  type: "page_view"
+                  version: 1
+                  source: "web"
+                  user_id: "user_123"
+                  anonymous_id: "anon_456"
+                  session_id: "session_789"
+                  timestamp: "2026-08-09T10:30:00Z"
+                  properties:
+                    page: "/products"
+                    device: "desktop"
+              purchaseExample:
+                summary: Purchase Event
+                value:
+                  type: "purchase"
+                  version: 1
+                  source: "web"
+                  user_id: "user_123"
+                  anonymous_id: "anon_456"
+                  session_id: "session_789"
+                  timestamp: "2026-08-09T10:35:00Z"
+                  properties:
+                    order_id: "ORD-2026-001"
+                    amount: 99.99
+                    currency: "USD"
+              searchExample:
+                summary: Search Event
+                value:
+                  type: "search"
+                  version: 1
+                  source: "web"
+                  user_id: "user_123"
+                  anonymous_id: "anon_456"
+                  session_id: "session_789"
+                  timestamp: "2026-08-09T10:40:00Z"
+                  properties:
+                    keyword: "golang event tracking"
+                    result_count: 42
+      responses:
+        "200":
+          description: Event successfully ingested
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/IngestEventResponse"
+              example:
+                event_id: "evt_550e8400e29b41d4a716446655440000"
+                status: "accepted"
+        "400":
+          description: Invalid request - missing required fields or invalid schema
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+              example:
+                error: "Invalid event type"
+                message: "Event type 'invalid_type' is not supported"
+        "422":
+          description: Validation error - properties don't match schema
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+              example:
+                error: "Validation failed"
+                message: "Field 'page' is required for page_view event"
+        "500":
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+              example:
+                error: "Internal server error"
+                message: "An unexpected error occurred while processing the event"
+
+components:
+  schemas:
+    IngestEventRequest:
+      type: object
+      required:
+        - type
+        - version
+        - source
+        - timestamp
+        - properties
+      properties:
+        type:
+          type: string
+          description: The type of event (page_view, purchase, search)
+          enum: ["page_view", "purchase", "search"]
+          example: "page_view"
+        version:
+          type: integer
+          description: Event schema version
+          example: 1
+          minimum: 1
+        source:
+          type: string
+          description: Source of the event (web, mobile, api, etc.)
+          example: "web"
+        user_id:
+          type: string
+          description: Authenticated user ID
+          example: "user_123"
+        anonymous_id:
+          type: string
+          description: Anonymous user ID for unidentified visitors
+          example: "anon_456"
+        session_id:
+          type: string
+          description: Session identifier
+          example: "session_789"
+        timestamp:
+          type: string
+          format: date-time
+          description: ISO 8601 timestamp of when the event occurred
+          example: "2026-08-09T10:30:00Z"
+        properties:
+          type: object
+          description: Event-specific properties (depends on event type)
+          additionalProperties: true
+          example:
+            page: "/products"
+            device: "desktop"
+
+    PageViewEventProperties:
+      type: object
+      required:
+        - page
+      properties:
+        page:
+          type: string
+          description: The page URL or path
+          example: "/products"
+        device:
+          type: string
+          description: Device type (optional)
+          example: "desktop"
+
+    PurchaseEventProperties:
+      type: object
+      required:
+        - order_id
+        - amount
+        - currency
+      properties:
+        order_id:
+          type: string
+          description: Unique order identifier
+          example: "ORD-2026-001"
+        amount:
+          type: number
+          format: double
+          description: Purchase amount
+          example: 99.99
+        currency:
+          type: string
+          description: Currency code (ISO 4217)
+          example: "USD"
+
+    SearchEventProperties:
+      type: object
+      required:
+        - keyword
+        - result_count
+      properties:
+        keyword:
+          type: string
+          description: Search query keyword
+          example: "golang event tracking"
+        result_count:
+          type: integer
+          description: Number of search results
+          example: 42
+          minimum: 0
+
+    IngestEventResponse:
+      type: object
+      properties:
+        event_id:
+          type: string
+          description: Unique event identifier assigned by the server
+          example: "evt_550e8400e29b41d4a716446655440000"
+        status:
+          type: string
+          description: Event processing status
+          enum: ["accepted", "queued", "processed"]
+          example: "accepted"
+
+    ErrorResponse:
+      type: object
+      properties:
+        error:
+          type: string
+          description: Error type/code
+          example: "Validation failed"
+        message:
+          type: string
+          description: Detailed error message
+          example: "Field 'page' is required for page_view event"
+
+tags:
+  - name: System
+    description: System and health check endpoints
+  - name: Events
+    description: Event ingestion endpoints
+
+x-postman-variables:
+  - name: baseUrl
+    value: http://localhost:8080
+    type: string
+  - name: userId
+    value: user_123
+    type: string
+  - name: anonymousId
+    value: anon_456
+    type: string
+  - name: sessionId
+    value: session_789
+    type: string
