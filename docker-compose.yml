@@ -1,0 +1,28 @@
+version: '3.8'
+
+services:
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: eventflow-api:local
+    container_name: eventflow-api
+    ports:
+      - "8080:8080"
+    environment:
+      - GO_ENV=development
+    networks:
+      - eventflow-net
+
+# Example placeholders for future services (db, kafka, worker)
+# db:
+#   image: postgres:15
+#   environment:
+#     POSTGRES_USER: eventflow
+#     POSTGRES_PASSWORD: example
+#   networks:
+#     - eventflow-net
+
+networks:
+  eventflow-net:
+    driver: bridge
