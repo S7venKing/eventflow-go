@@ -45,16 +45,15 @@ func (h *EventHandler) Ingest(c *gin.Context) {
 func toCommand(
 	req IngestEventRequest,
 ) application.IngestEventCommand {
-	return application.IngestEventCommand{
-		Type:        req.Type,
-		Version:     req.Version,
-		Source:      req.Source,
-		UserID:      req.UserID,
-		AnonymousID: req.AnonymousID,
-		SessionID:   req.SessionID,
-		Timestamp:   req.Timestamp,
-		Properties:  req.Properties,
+	var cmd application.IngestEventCommand
+
+	// Use the local Map util to copy matching exported fields
+	if err := Map(&cmd, req); err != nil {
+		// mapping should not fail for correct DTOs; in case it does, return zero-value command
+		return application.IngestEventCommand{}
 	}
+
+	return cmd
 }
 
 func handleHTTPError(c *gin.Context, err error) {
