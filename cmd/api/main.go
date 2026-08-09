@@ -5,7 +5,6 @@ import (
 
 	"github.com/s7venking/eventflow/internal/event/application"
 	"github.com/s7venking/eventflow/internal/event/domain"
-	"github.com/s7venking/eventflow/internal/event/validation"
 	httptransport "github.com/s7venking/eventflow/internal/transport/http"
 )
 
@@ -24,7 +23,7 @@ func main() {
 	}
 
 	// Application
-	validator := validation.NewValidator()
+	validator := application.NewValidator()
 
 	ingestor := application.NewEventIngestor(
 		registry,
