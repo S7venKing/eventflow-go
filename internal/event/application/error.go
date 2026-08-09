@@ -15,8 +15,16 @@ var (
 		"unsupported event source",
 	)
 
+	ErrInvalidEventSchema = errors.New(
+		"invalid event schema",
+	)
+
 	ErrPropertiesRequired = errors.New(
 		"properties is required",
+	)
+
+	ErrTimestampRequired = errors.New(
+		"timestamp is required",
 	)
 )
 
@@ -37,15 +45,11 @@ func validateCommand(
 	}
 
 	if cmd.Timestamp.IsZero() {
-		return errors.New(
-			"timestamp is required",
-		)
+		return ErrTimestampRequired
 	}
 
 	if cmd.Properties == nil {
-		return errors.New(
-			"properties is required",
-		)
+		return ErrPropertiesRequired
 	}
 
 	return nil

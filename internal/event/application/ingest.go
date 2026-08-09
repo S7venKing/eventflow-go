@@ -1,6 +1,7 @@
 package application
 
 import (
+	"fmt"
 	"time"
 
 	"github.com/s7venking/eventflow/internal/event/domain"
@@ -36,6 +37,9 @@ func NewEventIngestor(
 func (i *EventIngestor) Handle(
 	cmd IngestEventCommand,
 ) (domain.Event, error) {
+	if err := validateCommand(cmd); err != nil {
+		return domain.Event{}, err
+	}
 
 	schema, ok := i.registry.Get(
 		cmd.Type,
@@ -50,7 +54,7 @@ func (i *EventIngestor) Handle(
 		schema,
 		cmd.Properties,
 	); err != nil {
-		return domain.Event{}, err
+		return domain.Event{}, fmt.Errorf("%w: %s", ErrInvalidEventSchema, err)
 	}
 
 	event := domain.Event{

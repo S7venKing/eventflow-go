@@ -1,0 +1,38 @@
+package http
+
+import "github.com/s7venking/eventflow/internal/event/domain"
+
+type ErrorBody struct {
+	Code    string `json:"code"`
+	Message string `json:"message"`
+}
+
+type ErrorResponse struct {
+	Error ErrorBody `json:"error"`
+}
+
+type EventResponse struct {
+	ID          string         `json:"id"`
+	Type        string         `json:"type"`
+	Version     int            `json:"version"`
+	Source      string         `json:"source"`
+	UserID      string         `json:"user_id,omitempty"`
+	AnonymousID string         `json:"anonymous_id,omitempty"`
+	SessionID   string         `json:"session_id,omitempty"`
+	Timestamp   string         `json:"timestamp"`
+	Properties  map[string]any `json:"properties"`
+}
+
+func fromEvent(event domain.Event) EventResponse {
+	return EventResponse{
+		ID:          event.ID,
+		Type:        event.Type,
+		Version:     event.Version,
+		Source:      event.Source,
+		UserID:      event.UserID,
+		AnonymousID: event.AnonymousID,
+		SessionID:   event.SessionID,
+		Timestamp:   event.Timestamp.UTC().Format("2006-01-02T15:04:05Z07:00"),
+		Properties:  event.Properties,
+	}
+}
