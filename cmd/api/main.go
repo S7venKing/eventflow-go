@@ -5,6 +5,7 @@ import (
 
 	"github.com/s7venking/pulse/internal/event/application"
 	"github.com/s7venking/pulse/internal/event/domain"
+	"github.com/s7venking/pulse/internal/event/validation"
 	httptransport "github.com/s7venking/pulse/internal/transport/http"
 )
 
@@ -23,7 +24,12 @@ func main() {
 	}
 
 	// Application
-	ingestor := application.NewEventIngestor(registry)
+	validator := validation.NewValidator()
+
+	ingestor := application.NewEventIngestor(
+		registry,
+		validator,
+	)
 
 	// HTTP Handler
 	eventHandler := httptransport.NewEventHandler(ingestor)

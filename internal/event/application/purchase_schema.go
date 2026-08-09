@@ -1,9 +1,6 @@
 package application
 
-import (
-	"github.com/s7venking/pulse/internal/event/domain"
-	"github.com/s7venking/pulse/internal/event/validation"
-)
+import "github.com/s7venking/pulse/internal/event/domain"
 
 type PurchaseSchema struct{}
 
@@ -19,35 +16,24 @@ func (PurchaseSchema) Version() int {
 	return 1
 }
 
-func (PurchaseSchema) Validate(
-	properties map[string]any,
-) error {
-	if properties == nil {
-		return ErrPropertiesRequired
+func (PurchaseSchema) Fields() []domain.FieldDefinition {
+	return []domain.FieldDefinition{
+		{
+			Name:     "order_id",
+			Type:     domain.FieldTypeString,
+			Required: true,
+		},
+		{
+			Name:     "amount",
+			Type:     domain.FieldTypeNumber,
+			Required: true,
+		},
+		{
+			Name:     "currency",
+			Type:     domain.FieldTypeString,
+			Required: true,
+		},
 	}
-
-	if err := validation.RequiredString(
-		properties,
-		"order_id",
-	); err != nil {
-		return err
-	}
-
-	if err := validation.RequiredNumber(
-		properties,
-		"amount",
-	); err != nil {
-		return err
-	}
-
-	if err := validation.RequiredString(
-		properties,
-		"currency",
-	); err != nil {
-		return err
-	}
-
-	return nil
 }
 
 var _ domain.EventSchema = PurchaseSchema{}

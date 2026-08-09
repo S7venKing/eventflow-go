@@ -4,8 +4,8 @@ import (
 	"time"
 
 	"github.com/s7venking/pulse/internal/event/domain"
+	"github.com/s7venking/pulse/internal/event/validation"
 )
-
 
 type IngestEventCommand struct {
 	Type        string
@@ -18,26 +18,24 @@ type IngestEventCommand struct {
 	Properties  map[string]any
 }
 
-
 type EventIngestor struct {
-	registry domain.SchemaRegistry
+	registry  domain.SchemaRegistry
+	validator *validation.Validator
 }
 
 func NewEventIngestor(
 	registry domain.SchemaRegistry,
+	validator *validation.Validator,
 ) *EventIngestor {
 	return &EventIngestor{
-		registry: registry,
+		registry:  registry,
+		validator: validator,
 	}
 }
 
 func (i *EventIngestor) Handle(
 	cmd IngestEventCommand,
 ) (domain.Event, error) {
-
-	if err := validateCommand(cmd); err != nil {
-		return domain.Event{}, err
-	}
 
 	schema, ok := i.registry.Get(
 		cmd.Type,
@@ -48,7 +46,10 @@ func (i *EventIngestor) Handle(
 		return domain.Event{}, ErrInvalidEventType
 	}
 
-	if err := schema.Validate(cmd.Properties); err != nil {
+	if err := i.validator.Validate(
+		schema,
+		cmd.Properties,
+	); err != nil {
 		return domain.Event{}, err
 	}
 
