@@ -1,11 +1,9 @@
 package application
 
 import (
-	"fmt"
 	"time"
 
 	"github.com/s7venking/eventflow/internal/event/domain"
-	"github.com/s7venking/eventflow/internal/event/validation"
 )
 
 type IngestEventCommand struct {
@@ -21,12 +19,12 @@ type IngestEventCommand struct {
 
 type EventIngestor struct {
 	registry  domain.SchemaRegistry
-	validator *validation.Validator
+	validator *Validator
 }
 
 func NewEventIngestor(
 	registry domain.SchemaRegistry,
-	validator *validation.Validator,
+	validator *Validator,
 ) *EventIngestor {
 	return &EventIngestor{
 		registry:  registry,
@@ -54,7 +52,7 @@ func (i *EventIngestor) Handle(
 		schema,
 		cmd.Properties,
 	); err != nil {
-		return domain.Event{}, fmt.Errorf("%w: %s", ErrInvalidEventSchema, err)
+		return domain.Event{}, err
 	}
 
 	event := domain.Event{

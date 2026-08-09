@@ -1,0 +1,96 @@
+package application
+
+import (
+	"fmt"
+
+	"github.com/s7venking/eventflow/internal/event/domain"
+)
+
+type Validator struct{}
+
+func NewValidator() *Validator {
+	return &Validator{}
+}
+
+func (v *Validator) Validate(
+	schema domain.EventSchema,
+	properties map[string]any,
+) error {
+	if properties == nil {
+		return ErrPropertiesRequired
+	}
+
+	for _, field := range schema.Fields() {
+		value, exists := properties[field.Name]
+
+		if !exists {
+			if field.Required {
+				return fmt.Errorf(
+					"%w: %s is required",
+					ErrInvalidEventSchema,
+					field.Name,
+				)
+			}
+
+			continue
+		}
+
+		if err := validateType(
+			field,
+			value,
+		); err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+func validateType(
+	field domain.FieldDefinition,
+	value any,
+) error {
+	switch field.Type {
+	case domain.FieldTypeString:
+		if _, ok := value.(string); !ok {
+			return fmt.Errorf(
+				"%w: %s must be a string",
+				ErrInvalidEventSchema,
+				field.Name,
+			)
+		}
+
+	case domain.FieldTypeNumber:
+		switch value.(type) {
+		case int:
+		case int32:
+		case int64:
+		case float32:
+		case float64:
+		default:
+			return fmt.Errorf(
+				"%w: %s must be a number",
+				ErrInvalidEventSchema,
+				field.Name,
+			)
+		}
+
+	case domain.FieldTypeBool:
+		if _, ok := value.(bool); !ok {
+			return fmt.Errorf(
+				"%w: %s must be a boolean",
+				ErrInvalidEventSchema,
+				field.Name,
+			)
+		}
+
+	default:
+		return fmt.Errorf(
+			"%w: unsupported field type: %s",
+			ErrInvalidEventSchema,
+			field.Type,
+		)
+	}
+
+	return nil
+}
