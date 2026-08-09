@@ -3,7 +3,7 @@ package validation_test
 import (
 	"testing"
 
-	"github.com/s7venking/pulse/internal/event/validation"
+	"github.com/s7venking/eventflow/internal/event/validation"
 )
 
 func TestRequiredString(t *testing.T) {

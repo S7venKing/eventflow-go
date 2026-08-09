@@ -1,11 +1,11 @@
-# Pulse Event API - Test Files
+# Event Flow API - Test Files
 
-This directory contains all the necessary files for testing the Pulse Event API.
+This directory contains all the necessary files for testing the Event Flow API.
 
 ## Files
 
-### 1. **pulse-event-api.openapi.yaml**
-OpenAPI 3.0 specification for the Pulse Event API.
+### 1. **eventflow-event-api.openapi.yaml**
+OpenAPI 3.0 specification for the Event Flow API.
 
 **How to use:**
 - Import into Postman:
@@ -15,7 +15,7 @@ OpenAPI 3.0 specification for the Pulse Event API.
   - Upload to Swagger Editor at https://editor.swagger.io
 - Use with API documentation tools
 
-### 2. **pulse-event-api.postman.json**
+### 2. **eventflow-event-api.postman.json**
 Postman Collection with pre-configured requests and tests for all API endpoints.
 
 **How to use:**
@@ -27,16 +27,16 @@ Postman Collection with pre-configured requests and tests for all API endpoints.
     - Built-in test scripts
     - Example requests for each event type
 
-### 3. **pulse-event-api.test.sh**
+### 3. **eventflow-event-api.test.sh**
 Bash script with curl commands for testing the API from the terminal.
 
 **How to use:**
 ```bash
 # Make executable
-chmod +x pulse-event-api.test.sh
+chmod +x eventflow-event-api.test.sh
 
 # Run to see all curl commands
-./pulse-event-api.test.sh
+./eventflow-event-api.test.sh
 
 # Or run individual curl commands shown in the script
 curl -X GET http://localhost:8080/health
@@ -47,7 +47,7 @@ curl -X GET http://localhost:8080/health
 ### Using Postman (Recommended)
 1. Open Postman
 2. Click **Import** button
-3. Select `pulse-event-api.postman.json`
+3. Select `eventflow-event-api.postman.json`
 4. The collection will be imported with:
    - Configured base URL: `http://localhost:8080`
    - Default variables: userId, anonymousId, sessionId

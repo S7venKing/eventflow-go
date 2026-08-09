@@ -1,11 +1,11 @@
 openapi: 3.0.0
 info:
-  title: Pulse Event API
+  title: Event Flow API
   description: Event ingestion API for tracking user events (page views, purchases, searches, etc.)
   version: 1.0.0
   contact:
     name: API Support
-    url: https://github.com/s7venking/pulse
+    url: https://github.com/s7venking/eventflow
   license:
     name: MIT
 
@@ -42,7 +42,7 @@ paths:
   /v1/events:
     post:
       summary: Ingest an event
-      description: Submit an event to the Pulse Event API. Supports multiple event types with specific schemas.
+      description: Submit an event to the Event Flow API. Supports multiple event types with specific schemas.
       operationId: ingestEvent
       tags:
         - Events

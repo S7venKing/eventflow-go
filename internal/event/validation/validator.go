@@ -3,7 +3,7 @@ package validation
 import (
 	"fmt"
 
-	"github.com/s7venking/pulse/internal/event/domain"
+	"github.com/s7venking/eventflow/internal/event/domain"
 )
 
 type Validator struct{}

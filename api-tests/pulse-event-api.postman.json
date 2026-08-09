@@ -1,8 +1,8 @@
 {
   "info": {
-    "_postman_id": "pulse-event-api-collection",
-    "name": "Pulse Event API",
-    "description": "Collection for testing Pulse Event API - Event ingestion endpoint with multiple event types",
+    "_postman_id": "eventflow-event-api-collection",
+    "name": "Event Flow API",
+    "description": "Collection for testing Event Flow API - Event ingestion endpoint with multiple event types",
     "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
   },
   "item": [

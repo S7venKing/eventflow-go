@@ -3,8 +3,8 @@ package application
 import (
 	"time"
 
-	"github.com/s7venking/pulse/internal/event/domain"
-	"github.com/s7venking/pulse/internal/event/validation"
+	"github.com/s7venking/eventflow/internal/event/domain"
+	"github.com/s7venking/eventflow/internal/event/validation"
 )
 
 type IngestEventCommand struct {

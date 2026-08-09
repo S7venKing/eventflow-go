@@ -6,7 +6,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 
-	"github.com/s7venking/pulse/internal/event/application"
+	"github.com/s7venking/eventflow/internal/event/application"
 )
 
 type EventHandler struct {

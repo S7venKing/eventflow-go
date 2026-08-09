@@ -1,10 +1,10 @@
 #!/bin/bash
 
-# Pulse Event API - Test Commands
+# Event Flow API - Test Commands
 # API Base URL (change if running on different host/port)
 BASE_URL="http://localhost:8080"
 
-echo "=== Pulse Event API Test Commands ==="
+echo "=== Event Flow API Test Commands ==="
 echo ""
 
 # 1. Health Check
@@ -76,8 +76,8 @@ echo "Option 1: Run individual curl commands:"
 echo "  curl -X GET http://localhost:8080/health"
 echo ""
 echo "Option 2: Make this file executable and source it:"
-echo "  chmod +x pulse-event-api.test.sh"
-echo "  source pulse-event-api.test.sh"
+echo "  chmod +x eventflow-event-api.test.sh"
+echo "  source eventflow-event-api.test.sh"
 echo ""
 echo "Option 3: Use the curl commands directly from PowerShell:"
 echo ""

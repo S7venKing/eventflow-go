@@ -1,6 +1,6 @@
 package application
 
-import "github.com/s7venking/pulse/internal/event/domain"
+import "github.com/s7venking/eventflow/internal/event/domain"
 
 type PageViewSchema struct{}
 

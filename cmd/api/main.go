@@ -3,10 +3,10 @@ package main
 import (
 	"log"
 
-	"github.com/s7venking/pulse/internal/event/application"
-	"github.com/s7venking/pulse/internal/event/domain"
-	"github.com/s7venking/pulse/internal/event/validation"
-	httptransport "github.com/s7venking/pulse/internal/transport/http"
+	"github.com/s7venking/eventflow/internal/event/application"
+	"github.com/s7venking/eventflow/internal/event/domain"
+	"github.com/s7venking/eventflow/internal/event/validation"
+	httptransport "github.com/s7venking/eventflow/internal/transport/http"
 )
 
 func main() {
@@ -37,7 +37,7 @@ func main() {
 	// Router
 	router := httptransport.NewRouter(eventHandler)
 
-	log.Println("Pulse API running on :8080")
+	log.Println("eventflow API running on :8080")
 
 	if err := router.Run(":8080"); err != nil {
 		log.Fatal(err)
