@@ -16,5 +16,7 @@ RUN CGO_ENABLED=0 GOOS=linux go build -trimpath -ldflags "-s -w" -o /app/eventfl
 # Final minimal image
 FROM scratch
 COPY --from=builder /app/eventflow /eventflow
-EXPOSE 8080
+COPY --from=builder /src/migrations /migrations
+WORKDIR /
+EXPOSE 4053
 ENTRYPOINT ["/eventflow"]

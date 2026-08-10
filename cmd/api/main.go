@@ -16,9 +16,13 @@ func main() {
 
 	db, err := postgres.New(
 		ctx,
-		"postgres://eventflow:eventflow@localhost:5432/eventflow",
+		"postgres://eventflow:eventflow@postgres:5432/eventflow",
 	)
 	if err != nil {
+		log.Fatal(err)
+	}
+
+	if err := db.Migrate(ctx); err != nil {
 		log.Fatal(err)
 	}
 

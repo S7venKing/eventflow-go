@@ -11,6 +11,10 @@ services:
       - "4053:4053"
     environment:
       - GO_ENV=development
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: unless-stopped
     networks:
       - eventflow-net
 
@@ -22,12 +26,36 @@ services:
       POSTGRES_USER: eventflow
       POSTGRES_PASSWORD: eventflow
     ports:
-      - "5432:5432"
+      - "5452:5432"
+    networks:
+      - eventflow-net
     volumes:
       - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U eventflow"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  pgadmin:
+    image: dpage/pgadmin4:latest
+    container_name: eventflow-pgadmin
+    environment:
+      PGADMIN_DEFAULT_EMAIL: admin@example.com
+      PGADMIN_DEFAULT_PASSWORD: admin
+    ports:
+      - "5050:80"
+    depends_on:
+      - postgres
+    networks:
+      - eventflow-net
+    volumes:
+      - pgadmin_data:/var/lib/pgadmin
+      - ./pgadmin/servers.json:/pgadmin4/servers.json
 
 volumes:
   postgres_data:
+  pgadmin_data:
 
 networks:
   eventflow-net:

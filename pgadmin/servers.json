@@ -1,0 +1,14 @@
+{
+  "Servers": {
+    "1": {
+      "Name": "eventflow-postgres",
+      "Group": "Servers",
+      "Host": "postgres",
+      "Port": 5432,
+      "MaintenanceDB": "eventflow",
+      "Username": "eventflow",
+      "SSLMode": "prefer",
+      "Password": "eventflow"
+    }
+  }
+}

@@ -10,6 +10,8 @@ func NewRouter(
 	r.Use(gin.Logger())
 	r.Use(gin.Recovery())
 
+	r.GET("/health", eventHandler.Health)
+
 	v1 := r.Group("/api/v1")
 	{
 		events := v1.Group("/events")
