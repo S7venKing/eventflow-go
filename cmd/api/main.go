@@ -1,15 +1,32 @@
 package main
 
 import (
+	"context"
 	"log"
 
 	"github.com/s7venking/eventflow/internal/event/application"
 	"github.com/s7venking/eventflow/internal/event/domain"
+	"github.com/s7venking/eventflow/internal/platform/postgres"
 	httptransport "github.com/s7venking/eventflow/internal/transport/http"
 )
 
 func main() {
+
+	ctx := context.Background()
+
+	db, err := postgres.New(
+		ctx,
+		"postgres://eventflow:eventflow@localhost:5432/eventflow",
+	)
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	defer db.Close()
+
 	// Schema Registry
+	repository := postgres.NewEventRepository(db)
+
 	registry := domain.NewInMemorySchemaRegistry()
 
 	schemas := []domain.EventSchema{
@@ -28,6 +45,7 @@ func main() {
 	ingestor := application.NewEventIngestor(
 		registry,
 		validator,
+		repository,
 	)
 
 	// HTTP Handler

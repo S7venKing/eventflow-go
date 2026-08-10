@@ -1,6 +1,8 @@
 package application
 
 import (
+	"context"
+	"fmt"
 	"time"
 
 	"github.com/s7venking/eventflow/internal/event/domain"
@@ -18,21 +20,25 @@ type IngestEventCommand struct {
 }
 
 type EventIngestor struct {
-	registry  domain.SchemaRegistry
-	validator *Validator
+	registry   domain.SchemaRegistry
+	validator  *Validator
+	repository domain.EventRepository
 }
 
 func NewEventIngestor(
 	registry domain.SchemaRegistry,
 	validator *Validator,
+	repository domain.EventRepository,
 ) *EventIngestor {
 	return &EventIngestor{
-		registry:  registry,
-		validator: validator,
+		registry:   registry,
+		validator:  validator,
+		repository: repository,
 	}
 }
 
 func (i *EventIngestor) Handle(
+	ctx context.Context,
 	cmd IngestEventCommand,
 ) (domain.Event, error) {
 	if err := validateCommand(cmd); err != nil {
@@ -65,6 +71,16 @@ func (i *EventIngestor) Handle(
 		SessionID:   cmd.SessionID,
 		Timestamp:   cmd.Timestamp,
 		Properties:  cmd.Properties,
+	}
+
+	if err := i.repository.Save(
+		ctx,
+		event,
+	); err != nil {
+		return domain.Event{}, fmt.Errorf(
+			"save event: %w",
+			err,
+		)
 	}
 
 	return event, nil
