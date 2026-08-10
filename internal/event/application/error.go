@@ -7,7 +7,7 @@ var (
 		"unsupported event type",
 	)
 
-	ErrInvalidVersion = errors.New(
+	ErrInvalidEventVersion = errors.New(
 		"unsupported event version",
 	)
 
@@ -19,6 +19,10 @@ var (
 		"invalid event schema",
 	)
 
+	ErrInvalidRequest = errors.New(
+		"invalid request",
+	)
+
 	ErrPropertiesRequired = errors.New(
 		"properties is required",
 	)
@@ -27,30 +31,3 @@ var (
 		"timestamp is required",
 	)
 )
-
-func validateCommand(
-	cmd IngestEventCommand,
-) error {
-
-	if cmd.Type == "" {
-		return ErrInvalidEventType
-	}
-
-	if cmd.Version <= 0 {
-		return ErrInvalidVersion
-	}
-
-	if cmd.Source == "" {
-		return ErrInvalidSource
-	}
-
-	if cmd.Timestamp.IsZero() {
-		return ErrTimestampRequired
-	}
-
-	if cmd.Properties == nil {
-		return ErrPropertiesRequired
-	}
-
-	return nil
-}

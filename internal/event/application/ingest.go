@@ -69,3 +69,30 @@ func (i *EventIngestor) Handle(
 
 	return event, nil
 }
+
+func validateCommand(
+	cmd IngestEventCommand,
+) error {
+
+	if cmd.Type == "" {
+		return ErrInvalidEventType
+	}
+
+	if cmd.Version <= 0 {
+		return ErrInvalidEventVersion
+	}
+
+	if cmd.Source == "" {
+		return ErrInvalidSource
+	}
+
+	if cmd.Timestamp.IsZero() {
+		return ErrTimestampRequired
+	}
+
+	if cmd.Properties == nil {
+		return ErrPropertiesRequired
+	}
+
+	return nil
+}

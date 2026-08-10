@@ -36,9 +36,9 @@ func main() {
 	// Router
 	router := httptransport.NewRouter(eventHandler)
 
-	log.Println("eventflow API running on :8080")
+	log.Println("eventflow API running on :4053")
 
-	if err := router.Run(":8080"); err != nil {
+	if err := router.Run(":4053"); err != nil {
 		log.Fatal(err)
 	}
 }

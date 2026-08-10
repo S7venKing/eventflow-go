@@ -2,6 +2,7 @@ package http
 
 import (
 	"errors"
+	"fmt"
 	"net/http"
 
 	"github.com/gin-gonic/gin"
@@ -24,22 +25,30 @@ func (h *EventHandler) Ingest(c *gin.Context) {
 	var req IngestEventRequest
 
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, ErrorResponse{
-			Error: ErrorBody{
-				Code:    "INVALID_JSON",
-				Message: "invalid request body",
-			},
-		})
+		writeError(
+			c,
+			fmt.Errorf(
+				"%w: %v",
+				application.ErrInvalidRequest,
+				err,
+			),
+		)
 		return
 	}
 
 	event, err := h.ingestor.Handle(toCommand(req))
 	if err != nil {
-		handleHTTPError(c, err)
+		writeError(c, err)
 		return
 	}
 
 	c.JSON(http.StatusCreated, fromEvent(event))
+}
+
+func (h *EventHandler) Health(c *gin.Context) {
+	c.JSON(http.StatusOK, gin.H{
+		"status": "ok",
+	})
 }
 
 func toCommand(
@@ -56,54 +65,62 @@ func toCommand(
 	return cmd
 }
 
-func handleHTTPError(c *gin.Context, err error) {
+func writeError(
+	c *gin.Context,
+	err error,
+) {
+	status, code := mapError(err)
+
+	c.JSON(
+		status,
+		ErrorResponse{
+			Error: APIError{
+				Code:    code,
+				Message: err.Error(),
+			},
+		},
+	)
+}
+
+func mapError(err error) (int, string) {
 	switch {
-	case errors.Is(err, application.ErrInvalidEventType):
-		c.JSON(http.StatusBadRequest, ErrorResponse{
-			Error: ErrorBody{
-				Code:    "UNSUPPORTED_EVENT_TYPE",
-				Message: err.Error(),
-			},
-		})
+	case errors.Is(
+		err,
+		application.ErrInvalidEventType,
+	):
+		return http.StatusBadRequest, "INVALID_EVENT_TYPE"
 
-	case errors.Is(err, application.ErrInvalidVersion):
-		c.JSON(http.StatusBadRequest, ErrorResponse{
-			Error: ErrorBody{
-				Code:    "UNSUPPORTED_EVENT_VERSION",
-				Message: err.Error(),
-			},
-		})
+	case errors.Is(
+		err,
+		application.ErrInvalidEventVersion,
+	):
+		return http.StatusBadRequest, "INVALID_EVENT_VERSION"
 
-	case errors.Is(err, application.ErrInvalidSource):
-		c.JSON(http.StatusBadRequest, ErrorResponse{
-			Error: ErrorBody{
-				Code:    "INVALID_EVENT_SOURCE",
-				Message: err.Error(),
-			},
-		})
+	case errors.Is(
+		err,
+		application.ErrInvalidSource,
+	):
+		return http.StatusBadRequest, "INVALID_EVENT_SOURCE"
 
-	case errors.Is(err, application.ErrPropertiesRequired), errors.Is(err, application.ErrInvalidEventSchema):
-		c.JSON(http.StatusBadRequest, ErrorResponse{
-			Error: ErrorBody{
-				Code:    "INVALID_EVENT_SCHEMA",
-				Message: err.Error(),
-			},
-		})
+	case errors.Is(
+		err,
+		application.ErrInvalidEventSchema,
+	):
+		return http.StatusBadRequest, "INVALID_EVENT_SCHEMA"
 
-	case errors.Is(err, application.ErrTimestampRequired):
-		c.JSON(http.StatusBadRequest, ErrorResponse{
-			Error: ErrorBody{
-				Code:    "TIMESTAMP_REQUIRED",
-				Message: err.Error(),
-			},
-		})
+	case errors.Is(
+		err,
+		application.ErrPropertiesRequired,
+	):
+		return http.StatusBadRequest, "INVALID_PROPERTIES"
+
+	case errors.Is(
+		err,
+		application.ErrInvalidRequest,
+	):
+		return http.StatusBadRequest, "INVALID_REQUEST"
 
 	default:
-		c.JSON(http.StatusInternalServerError, ErrorResponse{
-			Error: ErrorBody{
-				Code:    "INTERNAL_ERROR",
-				Message: "internal server error",
-			},
-		})
+		return http.StatusInternalServerError, "INTERNAL_ERROR"
 	}
 }

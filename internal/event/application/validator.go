@@ -17,7 +17,10 @@ func (v *Validator) Validate(
 	properties map[string]any,
 ) error {
 	if properties == nil {
-		return ErrPropertiesRequired
+		return fmt.Errorf(
+			"%w",
+			ErrPropertiesRequired,
+		)
 	}
 
 	for _, field := range schema.Fields() {
@@ -39,7 +42,11 @@ func (v *Validator) Validate(
 			field,
 			value,
 		); err != nil {
-			return err
+			return fmt.Errorf(
+				"%w: %w",
+				ErrInvalidEventSchema,
+				err,
+			)
 		}
 	}
 
@@ -54,8 +61,7 @@ func validateType(
 	case domain.FieldTypeString:
 		if _, ok := value.(string); !ok {
 			return fmt.Errorf(
-				"%w: %s must be a string",
-				ErrInvalidEventSchema,
+				"%s must be a string",
 				field.Name,
 			)
 		}
@@ -69,8 +75,7 @@ func validateType(
 		case float64:
 		default:
 			return fmt.Errorf(
-				"%w: %s must be a number",
-				ErrInvalidEventSchema,
+				"%s must be a number",
 				field.Name,
 			)
 		}
@@ -78,16 +83,14 @@ func validateType(
 	case domain.FieldTypeBool:
 		if _, ok := value.(bool); !ok {
 			return fmt.Errorf(
-				"%w: %s must be a boolean",
-				ErrInvalidEventSchema,
+				"%s must be a boolean",
 				field.Name,
 			)
 		}
 
 	default:
 		return fmt.Errorf(
-			"%w: unsupported field type: %s",
-			ErrInvalidEventSchema,
+			"unsupported field type: %s",
 			field.Type,
 		)
 	}

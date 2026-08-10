@@ -39,7 +39,7 @@ paths:
               example:
                 status: "ok"
 
-  /v1/events:
+  /api/v1/events:
     post:
       summary: Ingest an event
       description: Submit an event to the Event Flow API. Supports multiple event types with specific schemas.
@@ -94,15 +94,21 @@ paths:
                     keyword: "golang event tracking"
                     result_count: 42
       responses:
-        "200":
+        "201":
           description: Event successfully ingested
           content:
             application/json:
               schema:
                 $ref: "#/components/schemas/IngestEventResponse"
               example:
-                event_id: "evt_550e8400e29b41d4a716446655440000"
-                status: "accepted"
+                id: "evt_550e8400e29b41d4a716446655440000"
+                type: "page_view"
+                version: 1
+                source: "web"
+                timestamp: "2026-08-09T10:30:00Z"
+                properties:
+                  page: "/products"
+                  device: "desktop"
         "400":
           description: Invalid request - missing required fields or invalid schema
           content:
@@ -110,8 +116,9 @@ paths:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
               example:
-                error: "Invalid event type"
-                message: "Event type 'invalid_type' is not supported"
+                error:
+                  code: "INVALID_REQUEST"
+                  message: "invalid request: unexpected EOF"
         "422":
           description: Validation error - properties don't match schema
           content:
@@ -119,8 +126,9 @@ paths:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
               example:
-                error: "Validation failed"
-                message: "Field 'page' is required for page_view event"
+                error:
+                  code: "INVALID_EVENT_SCHEMA"
+                  message: "invalid event schema: page is required"
         "500":
           description: Internal server error
           content:
@@ -128,8 +136,9 @@ paths:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
               example:
-                error: "Internal server error"
-                message: "An unexpected error occurred while processing the event"
+                error:
+                  code: "INTERNAL_ERROR"
+                  message: "internal server error"
 
 components:
   schemas:

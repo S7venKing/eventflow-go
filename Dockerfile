@@ -1,6 +1,6 @@
 # Multi-stage Dockerfile for building the eventflow API
 
-FROM golang:1.24 AS builder
+FROM golang:1.26 AS builder
 WORKDIR /src
 
 # Download dependencies first for caching

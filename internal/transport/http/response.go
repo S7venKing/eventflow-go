@@ -2,13 +2,13 @@ package http
 
 import "github.com/s7venking/eventflow/internal/event/domain"
 
-type ErrorBody struct {
+type APIError struct {
 	Code    string `json:"code"`
 	Message string `json:"message"`
 }
 
 type ErrorResponse struct {
-	Error ErrorBody `json:"error"`
+	Error APIError `json:"error"`
 }
 
 type EventResponse struct {
