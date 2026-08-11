@@ -13,6 +13,7 @@ type ErrorResponse struct {
 
 type EventResponse struct {
 	ID          string         `json:"id"`
+	EventID     string         `json:"event_id"`
 	Type        string         `json:"type"`
 	Version     int            `json:"version"`
 	Source      string         `json:"source"`
@@ -21,11 +22,13 @@ type EventResponse struct {
 	SessionID   string         `json:"session_id,omitempty"`
 	Timestamp   string         `json:"timestamp"`
 	Properties  map[string]any `json:"properties"`
+	CreatedAt   string         `json:"created_at"`
 }
 
 func fromEvent(event domain.Event) EventResponse {
 	return EventResponse{
 		ID:          event.ID,
+		EventID:     event.EventID,
 		Type:        event.Type,
 		Version:     event.Version,
 		Source:      event.Source,
@@ -34,5 +37,6 @@ func fromEvent(event domain.Event) EventResponse {
 		SessionID:   event.SessionID,
 		Timestamp:   event.Timestamp.UTC().Format("2006-01-02T15:04:05Z07:00"),
 		Properties:  event.Properties,
+		CreatedAt:   event.CreatedAt.UTC().Format("2006-01-02T15:04:05Z07:00"),
 	}
 }

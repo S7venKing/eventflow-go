@@ -36,13 +36,18 @@ func (h *EventHandler) Ingest(c *gin.Context) {
 		return
 	}
 	ctx := c.Request.Context()
-	event, err := h.ingestor.Handle(ctx, toCommand(req))
+	result, err := h.ingestor.Handle(ctx, toCommand(req))
 	if err != nil {
 		writeError(c, err)
 		return
 	}
 
-	c.JSON(http.StatusCreated, fromEvent(event))
+	status := http.StatusCreated
+	if !result.Created {
+		status = http.StatusOK
+	}
+
+	c.JSON(status, fromEvent(result.Event))
 }
 
 func (h *EventHandler) Health(c *gin.Context) {

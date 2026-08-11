@@ -2,9 +2,11 @@ package postgres
 
 import (
 	"context"
-	"encoding/json"
+	"errors"
 	"fmt"
 
+	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 	"github.com/s7venking/eventflow/internal/event/domain"
 )
 
@@ -22,22 +24,10 @@ func (r *EventRepository) Save(
 	ctx context.Context,
 	event domain.Event,
 ) error {
-	properties, err := json.Marshal(
-		event.Properties,
-	)
-
-	if err != nil {
-		return fmt.Errorf(
-			"marshal event properties: %w",
-			err,
-		)
-	}
-
-	_, err = r.db.Pool.Exec(
-		ctx,
-		`
+	const query = `
 		INSERT INTO events (
 			id,
+			event_id,
 			type,
 			version,
 			source,
@@ -45,7 +35,8 @@ func (r *EventRepository) Save(
 			anonymous_id,
 			session_id,
 			timestamp,
-			properties
+			properties,
+			created_at
 		)
 		VALUES (
 			$1,
@@ -56,10 +47,22 @@ func (r *EventRepository) Save(
 			$6,
 			$7,
 			$8,
-			$9
+			$9,
+			$10,
+			NOW()
 		)
-		`,
+		ON CONFLICT (event_id)
+		DO NOTHING
+		RETURNING id
+	`
+
+	var id uuid.UUID
+
+	err := r.db.Pool.QueryRow(
+		ctx,
+		query,
 		event.ID,
+		event.EventID,
 		event.Type,
 		event.Version,
 		event.Source,
@@ -67,8 +70,13 @@ func (r *EventRepository) Save(
 		event.AnonymousID,
 		event.SessionID,
 		event.Timestamp,
-		properties,
-	)
+		event.Properties,
+		event.CreatedAt,
+	).Scan(&id)
+
+	if errors.Is(err, pgx.ErrNoRows) {
+		return domain.ErrEventAlreadyExists
+	}
 
 	if err != nil {
 		return fmt.Errorf(
@@ -78,4 +86,59 @@ func (r *EventRepository) Save(
 	}
 
 	return nil
+}
+
+func (r *EventRepository) FindByEventID(
+	ctx context.Context,
+	eventID string,
+) (*domain.Event, error) {
+	const query = `
+		SELECT
+			id,
+			event_id,
+			type,
+			version,
+			source,
+			user_id,
+			anonymous_id,
+			session_id,
+			timestamp,
+			properties,
+			created_at
+		FROM events
+		WHERE event_id = $1
+	`
+
+	var event domain.Event
+
+	err := r.db.Pool.QueryRow(
+		ctx,
+		query,
+		eventID,
+	).Scan(
+		&event.ID,
+		&event.EventID,
+		&event.Type,
+		&event.Version,
+		&event.Source,
+		&event.UserID,
+		&event.AnonymousID,
+		&event.SessionID,
+		&event.Timestamp,
+		&event.Properties,
+		&event.CreatedAt,
+	)
+
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, domain.ErrEventNotFound
+	}
+
+	if err != nil {
+		return nil, fmt.Errorf(
+			"find event by event id: %w",
+			err,
+		)
+	}
+
+	return &event, nil
 }

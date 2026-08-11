@@ -1,9 +1,12 @@
 package domain
 
-import "time"
+import (
+	"time"
+)
 
 type Event struct {
 	ID          string
+	EventID     string
 	Type        string
 	Version     int
 	Source      string
@@ -12,4 +15,5 @@ type Event struct {
 	SessionID   string
 	Timestamp   time.Time
 	Properties  map[string]any
+	CreatedAt   time.Time
 }

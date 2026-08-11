@@ -2,6 +2,7 @@ package application
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"time"
 
@@ -17,6 +18,11 @@ type IngestEventCommand struct {
 	SessionID   string
 	Timestamp   time.Time
 	Properties  map[string]any
+}
+
+type IngestResult struct {
+	Event   domain.Event
+	Created bool
 }
 
 type EventIngestor struct {
@@ -40,9 +46,9 @@ func NewEventIngestor(
 func (i *EventIngestor) Handle(
 	ctx context.Context,
 	cmd IngestEventCommand,
-) (domain.Event, error) {
+) (IngestResult, error) {
 	if err := validateCommand(cmd); err != nil {
-		return domain.Event{}, err
+		return IngestResult{}, err
 	}
 
 	schema, ok := i.registry.Get(
@@ -51,18 +57,19 @@ func (i *EventIngestor) Handle(
 	)
 
 	if !ok {
-		return domain.Event{}, ErrInvalidEventType
+		return IngestResult{}, ErrInvalidEventType
 	}
 
 	if err := i.validator.Validate(
 		schema,
 		cmd.Properties,
 	); err != nil {
-		return domain.Event{}, err
+		return IngestResult{}, err
 	}
 
 	event := domain.Event{
-		ID:          generateEventID(),
+		ID:          generateID(),
+		EventID:     generateID(),
 		Type:        cmd.Type,
 		Version:     cmd.Version,
 		Source:      cmd.Source,
@@ -73,17 +80,41 @@ func (i *EventIngestor) Handle(
 		Properties:  cmd.Properties,
 	}
 
-	if err := i.repository.Save(
-		ctx,
-		event,
-	); err != nil {
-		return domain.Event{}, fmt.Errorf(
-			"save event: %w",
-			err,
-		)
+	err := i.repository.Save(ctx, event)
+
+	if err == nil {
+		return IngestResult{
+			Event:   event,
+			Created: true,
+		}, nil
 	}
 
-	return event, nil
+	if errors.Is(
+		err,
+		domain.ErrEventAlreadyExists,
+	) {
+		existing, findErr := i.repository.FindByEventID(
+			ctx,
+			event.EventID,
+		)
+
+		if findErr != nil {
+			return IngestResult{}, fmt.Errorf(
+				"find existing event: %w",
+				findErr,
+			)
+		}
+
+		return IngestResult{
+			Event:   *existing,
+			Created: false,
+		}, nil
+	}
+
+	return IngestResult{}, fmt.Errorf(
+		"save event: %w",
+		err,
+	)
 }
 
 func validateCommand(

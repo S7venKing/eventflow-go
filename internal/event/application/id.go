@@ -1,22 +1,9 @@
 package application
 
 import (
-	"crypto/rand"
-	"time"
-
-	"github.com/oklog/ulid/v2"
+	"github.com/google/uuid"
 )
 
-func generateEventID() string {
-	entropy := ulid.Monotonic(
-		rand.Reader,
-		0,
-	)
-
-	id := ulid.MustNew(
-		ulid.Timestamp(time.Now()),
-		entropy,
-	)
-
-	return id.String()
+func generateID() string {
+	return uuid.NewString()
 }

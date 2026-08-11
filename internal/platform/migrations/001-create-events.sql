@@ -1,6 +1,8 @@
 CREATE TABLE IF NOT EXISTS events (
     id UUID PRIMARY KEY,
 
+    event_id UUID UNIQUE NOT NULL,
+
     type VARCHAR(100) NOT NULL,
 
     version INTEGER NOT NULL,
