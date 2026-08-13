@@ -1,6 +1,9 @@
 package http
 
-import "github.com/s7venking/eventflow/internal/event/domain"
+import (
+	"github.com/google/uuid"
+	"github.com/s7venking/eventflow/internal/event/domain"
+)
 
 type APIError struct {
 	Code    string `json:"code"`
@@ -12,8 +15,8 @@ type ErrorResponse struct {
 }
 
 type EventResponse struct {
-	ID          string         `json:"id"`
-	EventID     string         `json:"event_id"`
+	ID          uuid.UUID      `json:"id"`
+	EventID     uuid.UUID      `json:"event_id"`
 	Type        string         `json:"type"`
 	Version     int            `json:"version"`
 	Source      string         `json:"source"`

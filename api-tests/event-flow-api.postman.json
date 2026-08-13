@@ -1,6 +1,6 @@
 {
   "info": {
-    "_postman_id": "eventflow-event-api-collection",
+    "_postman_id": "event-flow-api-collection",
     "name": "Event Flow API",
     "description": "Collection for testing Event Flow API - Event ingestion endpoint with multiple event types",
     "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
@@ -97,9 +97,9 @@
               "raw": "{\n  \"type\": \"page_view\",\n  \"version\": 1,\n  \"source\": \"web\",\n  \"user_id\": \"{{userId}}\",\n  \"anonymous_id\": \"{{anonymousId}}\",\n  \"session_id\": \"{{sessionId}}\",\n  \"timestamp\": \"{{timestamp}}\",\n  \"properties\": {\n    \"page\": \"/products\",\n    \"device\": \"desktop\"\n  }\n}"
             },
             "url": {
-              "raw": "{{baseUrl}}/v1/events",
+              "raw": "{{baseUrl}}/api/v1/events",
               "host": ["{{baseUrl}}"],
-              "path": ["v1", "events"]
+              "path": ["api", "v1", "events"]
             },
             "description": "Submit a page view event"
           },
@@ -120,11 +120,7 @@
                   "    var jsonData = pm.response.json();",
                   "    pm.expect(jsonData).to.have.property('event_id');",
                   "});",
-                  "",
-                  "pm.test(\"Response status is accepted\", function () {",
-                  "    var jsonData = pm.response.json();",
-                  "    pm.expect(jsonData.status).to.equal('accepted');",
-                  "});"
+                  ""
                 ],
                 "type": "text/javascript"
               }
@@ -154,9 +150,9 @@
               "raw": "{\n  \"type\": \"purchase\",\n  \"version\": 1,\n  \"source\": \"web\",\n  \"user_id\": \"{{userId}}\",\n  \"anonymous_id\": \"{{anonymousId}}\",\n  \"session_id\": \"{{sessionId}}\",\n  \"timestamp\": \"{{timestamp}}\",\n  \"properties\": {\n    \"order_id\": \"{{orderId}}\",\n    \"amount\": 99.99,\n    \"currency\": \"USD\"\n  }\n}"
             },
             "url": {
-              "raw": "{{baseUrl}}/v1/events",
+              "raw": "{{baseUrl}}/api/v1/events",
               "host": ["{{baseUrl}}"],
-              "path": ["v1", "events"]
+              "path": ["api", "v1", "events"]
             },
             "description": "Submit a purchase event"
           },
@@ -177,11 +173,7 @@
                   "    var jsonData = pm.response.json();",
                   "    pm.expect(jsonData).to.have.property('event_id');",
                   "});",
-                  "",
-                  "pm.test(\"Response has status field\", function () {",
-                  "    var jsonData = pm.response.json();",
-                  "    pm.expect(jsonData).to.have.property('status');",
-                  "});"
+                  ""
                 ],
                 "type": "text/javascript"
               }
@@ -210,9 +202,9 @@
               "raw": "{\n  \"type\": \"search\",\n  \"version\": 1,\n  \"source\": \"web\",\n  \"user_id\": \"{{userId}}\",\n  \"anonymous_id\": \"{{anonymousId}}\",\n  \"session_id\": \"{{sessionId}}\",\n  \"timestamp\": \"{{timestamp}}\",\n  \"properties\": {\n    \"keyword\": \"golang event tracking\",\n    \"result_count\": 42\n  }\n}"
             },
             "url": {
-              "raw": "{{baseUrl}}/v1/events",
+              "raw": "{{baseUrl}}/api/v1/events",
               "host": ["{{baseUrl}}"],
-              "path": ["v1", "events"]
+              "path": ["api", "v1", "events"]
             },
             "description": "Submit a search event"
           },
@@ -256,9 +248,9 @@
               "raw": "{\n  \"type\": \"page_view\",\n  \"version\": 1,\n  \"source\": \"mobile\",\n  \"user_id\": \"{{userId}}\",\n  \"anonymous_id\": \"{{anonymousId}}\",\n  \"session_id\": \"{{sessionId}}\",\n  \"timestamp\": \"{{timestamp}}\",\n  \"properties\": {\n    \"page\": \"/home\",\n    \"device\": \"mobile\"\n  }\n}"
             },
             "url": {
-              "raw": "{{baseUrl}}/v1/events",
+              "raw": "{{baseUrl}}/api/v1/events",
               "host": ["{{baseUrl}}"],
-              "path": ["v1", "events"]
+              "path": ["api", "v1", "events"]
             },
             "description": "Submit a page view event from mobile source"
           },
@@ -303,9 +295,9 @@
               "raw": "{\n  \"type\": \"purchase\",\n  \"version\": 1,\n  \"source\": \"web\",\n  \"user_id\": \"{{userId}}\",\n  \"anonymous_id\": \"{{anonymousId}}\",\n  \"session_id\": \"{{sessionId}}\",\n  \"timestamp\": \"{{timestamp}}\",\n  \"properties\": {\n    \"order_id\": \"{{orderId}}\",\n    \"amount\": 599.99,\n    \"currency\": \"USD\"\n  }\n}"
             },
             "url": {
-              "raw": "{{baseUrl}}/v1/events",
+              "raw": "{{baseUrl}}/api/v1/events",
               "host": ["{{baseUrl}}"],
-              "path": ["v1", "events"]
+              "path": ["api", "v1", "events"]
             },
             "description": "Submit a high-value purchase event"
           },

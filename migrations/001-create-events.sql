@@ -33,3 +33,6 @@ CREATE INDEX IF NOT EXISTS idx_events_user_id
 
 CREATE INDEX IF NOT EXISTS idx_events_session_id
     ON events(session_id);
+
+ALTER TABLE events
+ADD CONSTRAINT uq_events_event_id UNIQUE (event_id);

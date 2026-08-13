@@ -6,10 +6,12 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/s7venking/eventflow/internal/event/domain"
 )
 
 type IngestEventCommand struct {
+	EventID     uuid.UUID
 	Type        string
 	Version     int
 	Source      string
@@ -69,7 +71,7 @@ func (i *EventIngestor) Handle(
 
 	event := domain.Event{
 		ID:          generateID(),
-		EventID:     generateID(),
+		EventID:     cmd.EventID,
 		Type:        cmd.Type,
 		Version:     cmd.Version,
 		Source:      cmd.Source,

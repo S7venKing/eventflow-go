@@ -95,20 +95,45 @@ paths:
                     result_count: 42
       responses:
         "201":
-          description: Event successfully ingested
+          description: Event successfully ingested as a new record
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/IngestEventResponse"
+                $ref: "#/components/schemas/EventResponse"
               example:
-                id: "evt_550e8400e29b41d4a716446655440000"
+                id: "550e8400-e29b-41d4-a716-446655440000"
+                event_id: "700e8400-e29b-41d4-a716-446655440000"
                 type: "page_view"
                 version: 1
                 source: "web"
+                user_id: "user_123"
+                anonymous_id: "anon_456"
+                session_id: "session_789"
                 timestamp: "2026-08-09T10:30:00Z"
                 properties:
                   page: "/products"
                   device: "desktop"
+                created_at: "2026-08-09T10:30:00Z"
+        "200":
+          description: Event already existed; duplicate ingestion returned the existing event
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/EventResponse"
+              example:
+                id: "550e8400-e29b-41d4-a716-446655440000"
+                event_id: "700e8400-e29b-41d4-a716-446655440000"
+                type: "page_view"
+                version: 1
+                source: "web"
+                user_id: "user_123"
+                anonymous_id: "anon_456"
+                session_id: "session_789"
+                timestamp: "2026-08-09T10:30:00Z"
+                properties:
+                  page: "/products"
+                  device: "desktop"
+                created_at: "2026-08-09T10:30:00Z"
         "400":
           description: Invalid request - missing required fields or invalid schema
           content:
@@ -241,18 +266,60 @@ components:
           example: 42
           minimum: 0
 
-    IngestEventResponse:
+    EventResponse:
       type: object
       properties:
+        id:
+          type: string
+          format: uuid
+          description: Internal record identifier
+          example: "550e8400-e29b-41d4-a716-446655440000"
         event_id:
           type: string
-          description: Unique event identifier assigned by the server
-          example: "evt_550e8400e29b41d4a716446655440000"
-        status:
+          format: uuid
+          description: Business event identifier used for duplicate detection
+          example: "700e8400-e29b-41d4-a716-446655440000"
+        type:
           type: string
-          description: Event processing status
-          enum: ["accepted", "queued", "processed"]
-          example: "accepted"
+          description: The event type
+          example: "page_view"
+        version:
+          type: integer
+          description: Event schema version
+          example: 1
+        source:
+          type: string
+          description: Source of the event
+          example: "web"
+        user_id:
+          type: string
+          description: Authenticated user ID
+          example: "user_123"
+        anonymous_id:
+          type: string
+          description: Anonymous user ID
+          example: "anon_456"
+        session_id:
+          type: string
+          description: Session identifier
+          example: "session_789"
+        timestamp:
+          type: string
+          format: date-time
+          description: Event timestamp
+          example: "2026-08-09T10:30:00Z"
+        properties:
+          type: object
+          description: Event-specific properties
+          additionalProperties: true
+          example:
+            page: "/products"
+            device: "desktop"
+        created_at:
+          type: string
+          format: date-time
+          description: Record creation timestamp
+          example: "2026-08-09T10:30:00Z"
 
     ErrorResponse:
       type: object

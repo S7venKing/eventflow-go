@@ -1,9 +1,14 @@
 package http
 
-import "time"
+import (
+	"time"
+
+	"github.com/google/uuid"
+)
 
 type IngestEventRequest struct {
 	Type        string         `json:"type" binding:"required"`
+	EventID     uuid.UUID      `json:"event_id" binding:"required"`
 	Version     int            `json:"version" binding:"required,gt=0"`
 	Source      string         `json:"source" binding:"required"`
 	UserID      string         `json:"user_id,omitempty"`

@@ -49,7 +49,7 @@ func (r *EventRepository) Save(
 			$8,
 			$9,
 			$10,
-			NOW()
+			now()
 		)
 		ON CONFLICT (event_id)
 		DO NOTHING
@@ -71,7 +71,6 @@ func (r *EventRepository) Save(
 		event.SessionID,
 		event.Timestamp,
 		event.Properties,
-		event.CreatedAt,
 	).Scan(&id)
 
 	if errors.Is(err, pgx.ErrNoRows) {
@@ -90,7 +89,7 @@ func (r *EventRepository) Save(
 
 func (r *EventRepository) FindByEventID(
 	ctx context.Context,
-	eventID string,
+	eventID uuid.UUID,
 ) (*domain.Event, error) {
 	const query = `
 		SELECT

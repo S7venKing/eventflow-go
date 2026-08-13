@@ -36,6 +36,7 @@ func (h *EventHandler) Ingest(c *gin.Context) {
 		return
 	}
 	ctx := c.Request.Context()
+
 	result, err := h.ingestor.Handle(ctx, toCommand(req))
 	if err != nil {
 		writeError(c, err)

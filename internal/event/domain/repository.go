@@ -2,6 +2,8 @@ package domain
 
 import (
 	"context"
+
+	"github.com/google/uuid"
 )
 
 type EventRepository interface {
@@ -12,6 +14,6 @@ type EventRepository interface {
 
 	FindByEventID(
 		ctx context.Context,
-		eventID string,
+		eventID uuid.UUID,
 	) (*Event, error)
 }

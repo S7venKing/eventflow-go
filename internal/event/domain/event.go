@@ -2,11 +2,13 @@ package domain
 
 import (
 	"time"
+
+	"github.com/google/uuid"
 )
 
 type Event struct {
-	ID          string
-	EventID     string
+	ID          uuid.UUID
+	EventID     uuid.UUID
 	Type        string
 	Version     int
 	Source      string
