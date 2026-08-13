@@ -4,6 +4,8 @@ import (
 	"context"
 	"log"
 
+	"github.com/joho/godotenv"
+	"github.com/s7venking/eventflow/internal/config"
 	"github.com/s7venking/eventflow/internal/event/application"
 	"github.com/s7venking/eventflow/internal/event/domain"
 	"github.com/s7venking/eventflow/internal/platform/postgres"
@@ -11,12 +13,55 @@ import (
 )
 
 func main() {
+	if err := godotenv.Load(); err != nil {
+		log.Printf("warning: .env not loaded")
+	}
+
+	cfg, err := config.Load()
+
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	if err := cfg.Database.Validate(); err != nil {
+		log.Fatal(err)
+	}
+
+	log.Printf(
+		"database configured: %s",
+		cfg.Database.URL,
+	)
+
+	log.Printf(
+		"database url: %s",
+		cfg.Database.URL,
+	)
+
+	log.Printf(
+		"max conns: %d",
+		cfg.Database.MaxConns,
+	)
+
+	log.Printf(
+		"min conns: %d",
+		cfg.Database.MinConns,
+	)
+
+	log.Printf(
+		"max lifetime: %s",
+		cfg.Database.MaxConnLifetime,
+	)
+
+	log.Printf(
+		"max idle time: %s",
+		cfg.Database.MaxConnIdleTime,
+	)
 
 	ctx := context.Background()
 
 	db, err := postgres.New(
 		ctx,
-		"postgres://eventflow:eventflow@postgres:5432/eventflow",
+		cfg.Database.URL,
 	)
 	if err != nil {
 		log.Fatal(err)
