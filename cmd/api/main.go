@@ -3,8 +3,14 @@ package main
 import (
 	"context"
 	"log"
+	"net/http"
+	"os"
+	"os/signal"
+	"syscall"
+	"time"
 
 	"github.com/joho/godotenv"
+
 	"github.com/s7venking/eventflow/internal/config"
 	"github.com/s7venking/eventflow/internal/event/application"
 	"github.com/s7venking/eventflow/internal/event/domain"
@@ -13,12 +19,19 @@ import (
 )
 
 func main() {
+	// ========================================
+	// Environment
+	// ========================================
+
 	if err := godotenv.Load(); err != nil {
 		log.Printf("warning: .env not loaded")
 	}
 
-	cfg, err := config.Load()
+	// ========================================
+	// Config
+	// ========================================
 
+	cfg, err := config.Load()
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -33,48 +46,71 @@ func main() {
 	)
 
 	log.Printf(
-		"database url: %s",
-		cfg.Database.URL,
-	)
-
-	log.Printf(
-		"max conns: %d",
-		cfg.Database.MaxConns,
-	)
-
-	log.Printf(
-		"min conns: %d",
+		"database pool: min=%d max=%d lifetime=%s idle=%s",
 		cfg.Database.MinConns,
-	)
-
-	log.Printf(
-		"max lifetime: %s",
+		cfg.Database.MaxConns,
 		cfg.Database.MaxConnLifetime,
-	)
-
-	log.Printf(
-		"max idle time: %s",
 		cfg.Database.MaxConnIdleTime,
 	)
 
-	ctx := context.Background()
+	// ========================================
+	// Database
+	// ========================================
 
-	db, err := postgres.New(
+	ctx, cancel := context.WithTimeout(
+		context.Background(),
+		5*time.Second,
+	)
+	defer cancel()
+
+	db, err := postgres.NewDB(
 		ctx,
-		cfg.Database.URL,
+		cfg.Database,
 	)
 	if err != nil {
-		log.Fatal(err)
-	}
-
-	if err := db.Migrate(ctx); err != nil {
-		log.Fatal(err)
+		log.Fatalf(
+			"create database pool: %v",
+			err,
+		)
 	}
 
 	defer db.Close()
 
-	// Schema Registry
+	// ========================================
+	// Database Ping
+	// ========================================
+
+	if err := db.Ping(ctx); err != nil {
+		log.Fatalf(
+			"database ping failed: %v",
+			err,
+		)
+	}
+
+	log.Println("database connection established")
+
+	// ========================================
+	// Migration
+	// ========================================
+
+	if err := db.Migrate(ctx); err != nil {
+		log.Fatalf(
+			"database migration failed: %v",
+			err,
+		)
+	}
+
+	log.Println("database migration completed")
+
+	// ========================================
+	// Repository
+	// ========================================
+
 	repository := postgres.NewEventRepository(db)
+
+	// ========================================
+	// Schema Registry
+	// ========================================
 
 	registry := domain.NewInMemorySchemaRegistry()
 
@@ -88,7 +124,15 @@ func main() {
 		registry.RegisterSchema(schema)
 	}
 
+	log.Printf(
+		"schema registry initialized: %d schemas",
+		len(schemas),
+	)
+
+	// ========================================
 	// Application
+	// ========================================
+
 	validator := application.NewValidator()
 
 	ingestor := application.NewEventIngestor(
@@ -97,15 +141,84 @@ func main() {
 		repository,
 	)
 
-	// HTTP Handler
-	eventHandler := httptransport.NewEventHandler(ingestor)
+	// ========================================
+	// HTTP
+	// ========================================
 
-	// Router
-	router := httptransport.NewRouter(eventHandler)
+	eventHandler := httptransport.NewEventHandler(
+		ingestor,
+	)
 
-	log.Println("eventflow API running on :4053")
+	router := httptransport.NewRouter(
+		eventHandler,
+	)
 
-	if err := router.Run(":4053"); err != nil {
-		log.Fatal(err)
+	// ========================================
+	// HTTP Server
+	// ========================================
+
+	server := &http.Server{
+		Addr:    ":4053",
+		Handler: router,
 	}
+
+	// ========================================
+	// Start Server
+	// ========================================
+
+	serverErrors := make(chan error, 1)
+
+	go func() {
+		log.Println("eventflow API running on :4053")
+
+		if err := server.ListenAndServe(); err != nil &&
+			err != http.ErrServerClosed {
+			serverErrors <- err
+		}
+	}()
+
+	// ========================================
+	// Signal
+	// ========================================
+
+	shutdown := make(chan os.Signal, 1)
+
+	signal.Notify(
+		shutdown,
+		os.Interrupt,
+		syscall.SIGTERM,
+	)
+
+	select {
+	case err := <-serverErrors:
+		log.Fatalf(
+			"server failed: %v",
+			err,
+		)
+
+	case sig := <-shutdown:
+		log.Printf(
+			"received signal: %s",
+			sig,
+		)
+	}
+
+	// ========================================
+	// Graceful Shutdown
+	// ========================================
+
+	shutdownCtx, cancel := context.WithTimeout(
+		context.Background(),
+		10*time.Second,
+	)
+	defer cancel()
+
+	if err := server.Shutdown(shutdownCtx); err != nil {
+		log.Printf(
+			"HTTP server shutdown failed: %v",
+			err,
+		)
+	}
+
+	log.Println("HTTP server stopped")
 }
