@@ -149,8 +149,13 @@ func main() {
 		ingestor,
 	)
 
+	healthHandler := httptransport.NewHealthHandler(
+		db,
+	)
+
 	router := httptransport.NewRouter(
 		eventHandler,
+		healthHandler,
 	)
 
 	// ========================================

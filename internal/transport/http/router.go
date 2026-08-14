@@ -1,22 +1,27 @@
-package http
+package httptransport
 
 import "github.com/gin-gonic/gin"
 
 func NewRouter(
 	eventHandler *EventHandler,
+	healthHandler *HealthHandler,
 ) *gin.Engine {
-	r := gin.New()
+	router := gin.Default()
 
-	r.Use(gin.Logger())
-	r.Use(gin.Recovery())
+	router.POST(
+		"/events",
+		eventHandler.Ingest,
+	)
 
-	r.GET("/health", eventHandler.Health)
+	router.GET(
+		"/health",
+		healthHandler.Health,
+	)
 
-	v1 := r.Group("/api/v1")
-	{
-		events := v1.Group("/events")
-		events.POST("", eventHandler.Ingest)
-	}
+	router.GET(
+		"/ready",
+		healthHandler.Ready,
+	)
 
-	return r
+	return router
 }
