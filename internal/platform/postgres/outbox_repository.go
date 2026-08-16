@@ -3,26 +3,12 @@ package postgres
 import (
 	"context"
 	"fmt"
-	"time"
 
-	"github.com/google/uuid"
+	"github.com/s7venking/eventflow/internal/event/domain"
 )
 
 type OutboxRepository struct {
 	db *DB
-}
-
-type OutboxEvent struct {
-	ID          uuid.UUID
-	EventID     uuid.UUID
-	EventType   string
-	Payload     []byte
-	Status      string
-	Attempts    int
-	AvailableAt time.Time
-	CreatedAt   time.Time
-	PublishedAt *time.Time
-	LastError   *string
 }
 
 func NewOutboxRepository(db *DB) *OutboxRepository {
@@ -34,7 +20,7 @@ func NewOutboxRepository(db *DB) *OutboxRepository {
 func (r *OutboxRepository) GetPendingOutboxEvents(
 	ctx context.Context,
 	limit int,
-) ([]OutboxEvent, error) {
+) ([]domain.OutboxEvent, error) {
 	const query = `
 		SELECT
 			id,
@@ -68,10 +54,10 @@ func (r *OutboxRepository) GetPendingOutboxEvents(
 
 	defer rows.Close()
 
-	var events []OutboxEvent
+	var events []domain.OutboxEvent
 
 	for rows.Next() {
-		var event OutboxEvent
+		var event domain.OutboxEvent
 
 		err := rows.Scan(
 			&event.ID,

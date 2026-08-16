@@ -5,22 +5,33 @@ import (
 	"log"
 	"time"
 
+	"github.com/s7venking/eventflow/internal/event/domain"
 	"github.com/s7venking/eventflow/internal/platform/postgres"
 )
 
 type OutboxWorker struct {
 	repository *postgres.OutboxRepository
+	publisher  EventPublisher
 	interval   time.Duration
 	batchSize  int
 }
 
+type EventPublisher interface {
+	Publish(
+		ctx context.Context,
+		event domain.OutboxEvent,
+	) error
+}
+
 func NewOutboxWorker(
 	repository *postgres.OutboxRepository,
+	publisher EventPublisher,
 	interval time.Duration,
 	batchSize int,
 ) *OutboxWorker {
 	return &OutboxWorker{
 		repository: repository,
+		publisher:  publisher,
 		interval:   interval,
 		batchSize:  batchSize,
 	}
@@ -49,9 +60,7 @@ func (w *OutboxWorker) Run(ctx context.Context) {
 	}
 }
 
-func (w *OutboxWorker) process(
-	ctx context.Context,
-) error {
+func (w *OutboxWorker) process(ctx context.Context) error {
 	events, err := w.repository.GetPendingOutboxEvents(
 		ctx,
 		w.batchSize,
@@ -61,15 +70,42 @@ func (w *OutboxWorker) process(
 	}
 
 	for _, event := range events {
+		if err := w.publisher.Publish(ctx, event); err != nil {
+			log.Printf(
+				"publish outbox event failed: event_id=%s error=%v",
+				event.EventID,
+				err,
+			)
+
+			continue
+		}
+
 		log.Printf(
-			"processing outbox event: id=%s event_id=%s type=%s",
-			event.ID,
+			"published outbox event: event_id=%s type=%s",
 			event.EventID,
 			event.EventType,
 		)
-
-		// Kafka sẽ được thêm ở bước sau.
 	}
+
+	return nil
+}
+
+type LogPublisher struct{}
+
+func NewLogPublisher() *LogPublisher {
+	return &LogPublisher{}
+}
+
+func (p *LogPublisher) Publish(
+	ctx context.Context,
+	event domain.OutboxEvent,
+) error {
+	log.Printf(
+		"publish event: id=%s type=%s payload=%s",
+		event.EventID,
+		event.EventType,
+		string(event.Payload),
+	)
 
 	return nil
 }

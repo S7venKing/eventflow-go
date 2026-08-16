@@ -169,8 +169,12 @@ func main() {
 	}
 
 	//WORKER
+	// Outbox Publisher
+	publisher := application.NewLogPublisher()
+
 	outboxWorker := application.NewOutboxWorker(
 		outboxRepository,
+		publisher,
 		5*time.Second,
 		100,
 	)
