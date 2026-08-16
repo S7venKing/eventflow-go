@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 
+	"github.com/google/uuid"
 	"github.com/s7venking/eventflow/internal/event/domain"
 )
 
@@ -89,4 +90,38 @@ func (r *OutboxRepository) GetPendingOutboxEvents(
 	}
 
 	return events, nil
+}
+
+func (r *OutboxRepository) MarkPublished(
+	ctx context.Context,
+	id uuid.UUID,
+) error {
+	const query = `
+		UPDATE outbox_events
+		SET
+			status = 'PUBLISHED',
+			published_at = NOW()
+		WHERE id = $1
+	`
+
+	tag, err := r.db.Pool.Exec(
+		ctx,
+		query,
+		id,
+	)
+	if err != nil {
+		return fmt.Errorf(
+			"mark outbox event as published: %w",
+			err,
+		)
+	}
+
+	if tag.RowsAffected() == 0 {
+		return fmt.Errorf(
+			"outbox event not found: %s",
+			id,
+		)
+	}
+
+	return nil
 }

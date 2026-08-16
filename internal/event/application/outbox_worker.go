@@ -80,6 +80,19 @@ func (w *OutboxWorker) process(ctx context.Context) error {
 			continue
 		}
 
+		if err := w.repository.MarkPublished(
+			ctx,
+			event.ID,
+		); err != nil {
+			log.Printf(
+				"mark outbox event as published failed: event_id=%s error=%v",
+				event.EventID,
+				err,
+			)
+
+			continue
+		}
+
 		log.Printf(
 			"published outbox event: event_id=%s type=%s",
 			event.EventID,
