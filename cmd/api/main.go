@@ -107,6 +107,7 @@ func main() {
 	// ========================================
 
 	repository := postgres.NewEventRepository(db)
+	outboxRepository := postgres.NewOutboxRepository(db)
 
 	// ========================================
 	// Schema Registry
@@ -167,6 +168,20 @@ func main() {
 		Handler: router,
 	}
 
+	//WORKER
+	outboxWorker := application.NewOutboxWorker(
+		outboxRepository,
+		5*time.Second,
+		100,
+	)
+
+	workerCtx, workerCancel := context.WithCancel(
+		context.Background(),
+	)
+	defer workerCancel()
+
+	go outboxWorker.Run(workerCtx)
+
 	// ========================================
 	// Start Server
 	// ========================================
@@ -217,6 +232,7 @@ func main() {
 		10*time.Second,
 	)
 	defer cancel()
+	defer workerCancel()
 
 	if err := server.Shutdown(shutdownCtx); err != nil {
 		log.Printf(

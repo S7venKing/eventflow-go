@@ -2,6 +2,7 @@ package postgres
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 
@@ -24,7 +25,17 @@ func (r *EventRepository) Save(
 	ctx context.Context,
 	event domain.Event,
 ) error {
-	const query = `
+	tx, err := r.db.Pool.Begin(ctx)
+	if err != nil {
+		return fmt.Errorf(
+			"begin transaction: %w",
+			err,
+		)
+	}
+
+	defer tx.Rollback(ctx)
+
+	const insertEventQuery = `
 		INSERT INTO events (
 			id,
 			event_id,
@@ -49,7 +60,7 @@ func (r *EventRepository) Save(
 			$8,
 			$9,
 			$10,
-			now()
+			NOW()
 		)
 		ON CONFLICT (event_id)
 		DO NOTHING
@@ -58,9 +69,9 @@ func (r *EventRepository) Save(
 
 	var id uuid.UUID
 
-	err := r.db.Pool.QueryRow(
+	err = tx.QueryRow(
 		ctx,
-		query,
+		insertEventQuery,
 		event.ID,
 		event.EventID,
 		event.Type,
@@ -79,7 +90,65 @@ func (r *EventRepository) Save(
 
 	if err != nil {
 		return fmt.Errorf(
-			"save event: %w",
+			"insert event: %w",
+			err,
+		)
+	}
+
+	const insertOutboxQuery = `
+		INSERT INTO outbox_events (
+			id,
+			event_id,
+			event_type,
+			payload
+		)
+		VALUES (
+			$1,
+			$2,
+			$3,
+			$4
+		)
+	`
+
+	payload := map[string]any{
+		"event_id":     event.EventID,
+		"type":         event.Type,
+		"version":      event.Version,
+		"source":       event.Source,
+		"user_id":      event.UserID,
+		"anonymous_id": event.AnonymousID,
+		"session_id":   event.SessionID,
+		"timestamp":    event.Timestamp,
+		"properties":   event.Properties,
+	}
+
+	payloadJSON, err := json.Marshal(payload)
+	if err != nil {
+		return fmt.Errorf(
+			"marshal outbox payload: %w",
+			err,
+		)
+	}
+
+	_, err = tx.Exec(
+		ctx,
+		insertOutboxQuery,
+		uuid.New(),
+		event.EventID,
+		event.Type,
+		payloadJSON,
+	)
+
+	if err != nil {
+		return fmt.Errorf(
+			"insert outbox event: %w",
+			err,
+		)
+	}
+
+	if err := tx.Commit(ctx); err != nil {
+		return fmt.Errorf(
+			"commit transaction: %w",
 			err,
 		)
 	}

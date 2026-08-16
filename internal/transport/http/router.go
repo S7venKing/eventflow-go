@@ -9,7 +9,7 @@ func NewRouter(
 	router := gin.Default()
 
 	router.POST(
-		"/events",
+		"/api/v1/events",
 		eventHandler.Ingest,
 	)
 
