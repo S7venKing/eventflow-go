@@ -17,3 +17,5 @@ type EventRepository interface {
 		eventID uuid.UUID,
 	) (*Event, error)
 }
+
+

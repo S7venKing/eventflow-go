@@ -3,6 +3,7 @@ package postgres
 import (
 	"context"
 	"fmt"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/s7venking/eventflow/internal/event/domain"
@@ -119,6 +120,46 @@ func (r *OutboxRepository) MarkPublished(
 	if tag.RowsAffected() == 0 {
 		return fmt.Errorf(
 			"outbox event not found: %s",
+			id,
+		)
+	}
+
+	return nil
+}
+
+func (r *OutboxRepository) MarkFailed(
+	ctx context.Context,
+	id uuid.UUID,
+	errMsg string,
+	nextAttemptAt time.Time,
+) error {
+	const query = `
+		UPDATE outbox_events
+		SET
+			attempts = attempts + 1,
+			available_at = $2,
+			last_error = $3
+		WHERE id = $1
+		  AND status = 'PENDING'
+	`
+
+	tag, err := r.db.Pool.Exec(
+		ctx,
+		query,
+		id,
+		nextAttemptAt,
+		errMsg,
+	)
+	if err != nil {
+		return fmt.Errorf(
+			"mark outbox event as failed: %w",
+			err,
+		)
+	}
+
+	if tag.RowsAffected() == 0 {
+		return fmt.Errorf(
+			"outbox event not found or not pending: %s",
 			id,
 		)
 	}

@@ -60,6 +60,8 @@ func (w *OutboxWorker) Run(ctx context.Context) {
 	}
 }
 
+const retryDelay = 10 * time.Second
+
 func (w *OutboxWorker) process(ctx context.Context) error {
 	events, err := w.repository.GetPendingOutboxEvents(
 		ctx,
@@ -71,9 +73,25 @@ func (w *OutboxWorker) process(ctx context.Context) error {
 
 	for _, event := range events {
 		if err := w.publisher.Publish(ctx, event); err != nil {
+			nextAttemptAt := time.Now().Add(retryDelay)
+
+			if markErr := w.repository.MarkFailed(
+				ctx,
+				event.ID,
+				err.Error(),
+				nextAttemptAt,
+			); markErr != nil {
+				log.Printf(
+					"mark outbox event failed: event_id=%s error=%v",
+					event.EventID,
+					markErr,
+				)
+			}
+
 			log.Printf(
-				"publish outbox event failed: event_id=%s error=%v",
+				"publish failed: event_id=%s retry_at=%s error=%v",
 				event.EventID,
+				nextAttemptAt,
 				err,
 			)
 
@@ -85,7 +103,7 @@ func (w *OutboxWorker) process(ctx context.Context) error {
 			event.ID,
 		); err != nil {
 			log.Printf(
-				"mark outbox event as published failed: event_id=%s error=%v",
+				"mark published failed: event_id=%s error=%v",
 				event.EventID,
 				err,
 			)
@@ -94,7 +112,7 @@ func (w *OutboxWorker) process(ctx context.Context) error {
 		}
 
 		log.Printf(
-			"published outbox event: event_id=%s type=%s",
+			"published: event_id=%s type=%s",
 			event.EventID,
 			event.EventType,
 		)
