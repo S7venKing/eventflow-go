@@ -19,10 +19,20 @@ func NewOutboxRepository(db *DB) *OutboxRepository {
 	}
 }
 
-func (r *OutboxRepository) GetPendingOutboxEvents(
+func (r *OutboxRepository) ClaimPending(
 	ctx context.Context,
 	limit int,
 ) ([]domain.OutboxEvent, error) {
+	tx, err := r.db.Pool.Begin(ctx)
+	if err != nil {
+		return nil, fmt.Errorf(
+			"begin claim transaction: %w",
+			err,
+		)
+	}
+
+	defer tx.Rollback(ctx)
+
 	const query = `
 		SELECT
 			id,
@@ -40,28 +50,25 @@ func (r *OutboxRepository) GetPendingOutboxEvents(
 		  AND available_at <= NOW()
 		ORDER BY created_at
 		LIMIT $1
+		FOR UPDATE SKIP LOCKED
 	`
 
-	rows, err := r.db.Pool.Query(
-		ctx,
-		query,
-		limit,
-	)
+	rows, err := tx.Query(ctx, query, limit)
 	if err != nil {
 		return nil, fmt.Errorf(
-			"get pending outbox events: %w",
+			"query pending outbox events: %w",
 			err,
 		)
 	}
 
 	defer rows.Close()
 
-	var events []domain.OutboxEvent
+	events := make([]domain.OutboxEvent, 0, limit)
 
 	for rows.Next() {
 		var event domain.OutboxEvent
 
-		err := rows.Scan(
+		if err := rows.Scan(
 			&event.ID,
 			&event.EventID,
 			&event.EventType,
@@ -72,8 +79,7 @@ func (r *OutboxRepository) GetPendingOutboxEvents(
 			&event.CreatedAt,
 			&event.PublishedAt,
 			&event.LastError,
-		)
-		if err != nil {
+		); err != nil {
 			return nil, fmt.Errorf(
 				"scan outbox event: %w",
 				err,
@@ -88,6 +94,50 @@ func (r *OutboxRepository) GetPendingOutboxEvents(
 			"iterate outbox events: %w",
 			err,
 		)
+	}
+
+	if len(events) == 0 {
+		if err := tx.Commit(ctx); err != nil {
+			return nil, fmt.Errorf(
+				"commit empty claim transaction: %w",
+				err,
+			)
+		}
+
+		return events, nil
+	}
+
+	ids := make([]uuid.UUID, 0, len(events))
+
+	for _, event := range events {
+		ids = append(ids, event.ID)
+	}
+
+	_, err = tx.Exec(
+		ctx,
+		`
+		UPDATE outbox_events
+		SET status = 'PROCESSING'
+		WHERE id = ANY($1)
+		`,
+		ids,
+	)
+	if err != nil {
+		return nil, fmt.Errorf(
+			"mark outbox events processing: %w",
+			err,
+		)
+	}
+
+	if err := tx.Commit(ctx); err != nil {
+		return nil, fmt.Errorf(
+			"commit claim transaction: %w",
+			err,
+		)
+	}
+
+	for i := range events {
+		events[i].Status = "PROCESSING"
 	}
 
 	return events, nil
@@ -136,11 +186,12 @@ func (r *OutboxRepository) MarkFailed(
 	const query = `
 		UPDATE outbox_events
 		SET
+			status = 'PENDING'
 			attempts = attempts + 1,
 			available_at = $2,
 			last_error = $3
 		WHERE id = $1
-		  AND status = 'PENDING'
+		  AND status = 'PROCESSING'
 	`
 
 	tag, err := r.db.Pool.Exec(

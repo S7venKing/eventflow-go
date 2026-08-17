@@ -63,7 +63,7 @@ func (w *OutboxWorker) Run(ctx context.Context) {
 const retryDelay = 10 * time.Second
 
 func (w *OutboxWorker) process(ctx context.Context) error {
-	events, err := w.repository.GetPendingOutboxEvents(
+	events, err := w.repository.ClaimPending(
 		ctx,
 		w.batchSize,
 	)
