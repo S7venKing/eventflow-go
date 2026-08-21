@@ -168,6 +168,17 @@ func main() {
 		Handler: router,
 	}
 
+	// ========================================
+	// Shutdown Signal Context
+	// ========================================
+
+	rootCtx, stop := signal.NotifyContext(
+		context.Background(),
+		os.Interrupt,
+		syscall.SIGTERM,
+	)
+	defer stop()
+
 	//WORKER
 	// Outbox Publisher
 	publisher := application.NewLogPublisher()
@@ -180,14 +191,14 @@ func main() {
 		3,
 		1*time.Second,
 		30*time.Second,
+		cfg.ShutdownTimeout,
 	)
 
-	workerCtx, workerCancel := context.WithCancel(
-		context.Background(),
-	)
-	defer workerCancel()
+	workerErrors := make(chan error, 1)
 
-	go outboxWorker.Run(workerCtx)
+	go func() {
+		workerErrors <- outboxWorker.Run(rootCtx)
+	}()
 
 	// ========================================
 	// Start Server
@@ -208,14 +219,6 @@ func main() {
 	// Signal
 	// ========================================
 
-	shutdown := make(chan os.Signal, 1)
-
-	signal.Notify(
-		shutdown,
-		os.Interrupt,
-		syscall.SIGTERM,
-	)
-
 	select {
 	case err := <-serverErrors:
 		log.Fatalf(
@@ -223,12 +226,13 @@ func main() {
 			err,
 		)
 
-	case sig := <-shutdown:
-		log.Printf(
-			"received signal: %s",
-			sig,
-		)
+	case <-rootCtx.Done():
+		log.Println("shutdown_signal_received")
 	}
+
+	// Restore default signal handling so a second SIGINT/SIGTERM kills
+	// the process immediately instead of being swallowed.
+	stop()
 
 	// ========================================
 	// Graceful Shutdown
@@ -236,10 +240,9 @@ func main() {
 
 	shutdownCtx, cancel := context.WithTimeout(
 		context.Background(),
-		10*time.Second,
+		cfg.ShutdownTimeout,
 	)
 	defer cancel()
-	defer workerCancel()
 
 	if err := server.Shutdown(shutdownCtx); err != nil {
 		log.Printf(
@@ -249,4 +252,22 @@ func main() {
 	}
 
 	log.Println("HTTP server stopped")
+
+	// The worker has been draining since the signal arrived and bounds
+	// its own exit with cfg.ShutdownTimeout; the extra grace here only
+	// guards against a publisher that ignores context cancellation.
+	select {
+	case err := <-workerErrors:
+		if err != nil {
+			log.Printf(
+				"outbox worker stopped with error: %v",
+				err,
+			)
+		}
+
+	case <-time.After(cfg.ShutdownTimeout + 5*time.Second):
+		log.Println("outbox worker did not stop in time")
+	}
+
+	log.Println("application_stopped")
 }

@@ -548,6 +548,7 @@ func newIntegrationWorker(
 		maxRetries,
 		retryBaseDelay,
 		retryMaxDelay,
+		30*time.Second,
 	)
 }
 

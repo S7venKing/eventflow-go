@@ -8,7 +8,8 @@ import (
 )
 
 type Config struct {
-	Database DatabaseConfig
+	Database        DatabaseConfig
+	ShutdownTimeout time.Duration
 }
 
 type DatabaseConfig struct {
@@ -92,6 +93,14 @@ func Load() (Config, error) {
 		return Config{}, err
 	}
 
+	shutdownTimeout, err := getDurationWithDefault(
+		"SHUTDOWN_TIMEOUT",
+		30*time.Second,
+	)
+	if err != nil {
+		return Config{}, err
+	}
+
 	return Config{
 		Database: DatabaseConfig{
 			URL:             databaseURL,
@@ -100,6 +109,7 @@ func Load() (Config, error) {
 			MaxConnLifetime: maxLifetime,
 			MaxConnIdleTime: maxIdleTime,
 		},
+		ShutdownTimeout: shutdownTimeout,
 	}, nil
 }
 
@@ -128,6 +138,36 @@ func getInt32(key string) (int32, error) {
 	}
 
 	return int32(result), nil
+}
+
+func getDurationWithDefault(
+	key string,
+	fallback time.Duration,
+) (time.Duration, error) {
+	value := os.Getenv(key)
+
+	if value == "" {
+		return fallback, nil
+	}
+
+	result, err := time.ParseDuration(value)
+
+	if err != nil {
+		return 0, fmt.Errorf(
+			"%s must be a valid duration: %w",
+			key,
+			err,
+		)
+	}
+
+	if result <= 0 {
+		return 0, fmt.Errorf(
+			"%s must be greater than 0",
+			key,
+		)
+	}
+
+	return result, nil
 }
 
 func getDuration(key string) (time.Duration, error) {
