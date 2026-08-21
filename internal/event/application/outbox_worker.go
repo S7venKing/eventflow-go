@@ -10,10 +10,13 @@ import (
 )
 
 type OutboxWorker struct {
-	repository *postgres.OutboxRepository
-	publisher  EventPublisher
-	interval   time.Duration
-	batchSize  int
+	repository     *postgres.OutboxRepository
+	publisher      EventPublisher
+	interval       time.Duration
+	batchSize      int
+	maxRetries     int
+	retryBaseDelay time.Duration
+	retryMaxDelay  time.Duration
 }
 
 type EventPublisher interface {
@@ -28,12 +31,18 @@ func NewOutboxWorker(
 	publisher EventPublisher,
 	interval time.Duration,
 	batchSize int,
+	maxRetries int,
+	retryBaseDelay time.Duration,
+	retryMaxDelay time.Duration,
 ) *OutboxWorker {
 	return &OutboxWorker{
-		repository: repository,
-		publisher:  publisher,
-		interval:   interval,
-		batchSize:  batchSize,
+		repository:     repository,
+		publisher:      publisher,
+		interval:       interval,
+		batchSize:      batchSize,
+		maxRetries:     maxRetries,
+		retryBaseDelay: retryBaseDelay,
+		retryMaxDelay:  retryMaxDelay,
 	}
 }
 
@@ -60,8 +69,6 @@ func (w *OutboxWorker) Run(ctx context.Context) {
 	}
 }
 
-const retryDelay = 10 * time.Second
-
 func (w *OutboxWorker) process(ctx context.Context) error {
 	events, err := w.repository.ClaimPending(
 		ctx,
@@ -73,13 +80,44 @@ func (w *OutboxWorker) process(ctx context.Context) error {
 
 	for _, event := range events {
 		if err := w.publisher.Publish(ctx, event); err != nil {
-			nextAttemptAt := time.Now().Add(retryDelay)
+			if event.Attempts >= w.maxRetries {
+				if closeErr := w.repository.MarkClose(
+					ctx,
+					event.ID,
+					err.Error(),
+				); closeErr != nil {
+					log.Printf(
+						"mark outbox event closed: event_id=%s error=%v",
+						event.EventID,
+						closeErr,
+					)
+				}
+
+				log.Printf(
+					"publish failed permanently: event_id=%s attempts=%d error=%v",
+					event.EventID,
+					event.Attempts,
+					err,
+				)
+
+				continue
+			}
+
+			retryNumber := event.Attempts + 1
+
+			delay := RetryDelay(
+				retryNumber,
+				w.retryBaseDelay,
+				w.retryMaxDelay,
+			)
+
+			retryAt := time.Now().Add(delay)
 
 			if markErr := w.repository.MarkFailed(
 				ctx,
 				event.ID,
 				err.Error(),
-				nextAttemptAt,
+				retryAt,
 			); markErr != nil {
 				log.Printf(
 					"mark outbox event failed: event_id=%s error=%v",
@@ -89,9 +127,10 @@ func (w *OutboxWorker) process(ctx context.Context) error {
 			}
 
 			log.Printf(
-				"publish failed: event_id=%s retry_at=%s error=%v",
+				"publish failed: event_id=%s retry=%d retry_at=%s error=%v",
 				event.EventID,
-				nextAttemptAt,
+				retryNumber,
+				retryAt,
 				err,
 			)
 

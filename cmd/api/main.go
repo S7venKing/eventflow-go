@@ -177,6 +177,9 @@ func main() {
 		publisher,
 		5*time.Second,
 		100,
+		3,
+		1*time.Second,
+		30*time.Second,
 	)
 
 	workerCtx, workerCancel := context.WithCancel(

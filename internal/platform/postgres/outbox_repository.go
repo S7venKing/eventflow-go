@@ -186,7 +186,7 @@ func (r *OutboxRepository) MarkFailed(
 	const query = `
 		UPDATE outbox_events
 		SET
-			status = 'PENDING'
+			status = 'PENDING',
 			attempts = attempts + 1,
 			available_at = $2,
 			last_error = $3
@@ -211,6 +211,43 @@ func (r *OutboxRepository) MarkFailed(
 	if tag.RowsAffected() == 0 {
 		return fmt.Errorf(
 			"outbox event not found or not pending: %s",
+			id,
+		)
+	}
+
+	return nil
+}
+
+func (r *OutboxRepository) MarkClose(
+	ctx context.Context,
+	id uuid.UUID,
+	errMsg string,
+) error {
+	const query = `
+		UPDATE outbox_events
+		SET
+			status = 'CLOSE',
+			last_error = $2
+		WHERE id = $1
+		  AND status = 'PROCESSING'
+	`
+
+	tag, err := r.db.Pool.Exec(
+		ctx,
+		query,
+		id,
+		errMsg,
+	)
+	if err != nil {
+		return fmt.Errorf(
+			"mark outbox event as closed: %w",
+			err,
+		)
+	}
+
+	if tag.RowsAffected() == 0 {
+		return fmt.Errorf(
+			"outbox event not found or not processing: %s",
 			id,
 		)
 	}
