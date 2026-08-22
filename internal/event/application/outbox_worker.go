@@ -197,6 +197,12 @@ func (w *OutboxWorker) process(ctx context.Context) error {
 
 	for _, event := range events {
 		if err := w.publisher.Publish(ctx, event); err != nil {
+
+			if errors.Is(err, context.Canceled) ||
+				errors.Is(err, context.DeadlineExceeded) {
+				return err
+			}
+
 			if event.Attempts >= w.maxRetries {
 				if closeErr := w.repository.MarkClose(
 					ctx,
