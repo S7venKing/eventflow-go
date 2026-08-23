@@ -66,9 +66,29 @@ services:
       - pgadmin_data:/var/lib/pgadmin
       - ./pgadmin/servers.json:/pgadmin4/servers.json
 
+  prometheus:
+    image: prom/prometheus:latest
+    container_name: eventflow-prometheus
+
+    ports:
+      - "9090:9090"
+
+    volumes:
+      - ./prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus_data:/prometheus
+
+    depends_on:
+      - api
+
+    networks:
+      - eventflow-net
+
+    restart: unless-stopped
+
 volumes:
   postgres_data:
   pgadmin_data:
+  prometheus_data:
 
 networks:
   eventflow-net:
