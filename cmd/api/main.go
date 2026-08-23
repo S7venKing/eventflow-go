@@ -16,6 +16,7 @@ import (
 	"github.com/s7venking/eventflow/internal/event/application"
 	"github.com/s7venking/eventflow/internal/event/domain"
 	"github.com/s7venking/eventflow/internal/metrics"
+	"github.com/s7venking/eventflow/internal/platform/logger"
 	"github.com/s7venking/eventflow/internal/platform/postgres"
 	httptransport "github.com/s7venking/eventflow/internal/transport/http"
 )
@@ -132,6 +133,13 @@ func main() {
 		len(schemas),
 	)
 
+	appLogger := logger.New()
+
+	workerLogger := appLogger.With(
+		"service", "eventflow",
+		"component", "outbox-worker",
+	)
+
 	// ========================================
 	// Application
 	// ========================================
@@ -208,6 +216,7 @@ func main() {
 		30*time.Second,
 		cfg.ShutdownTimeout,
 		outboxMetrics,
+		workerLogger,
 	)
 
 	workerErrors := make(chan error, 1)

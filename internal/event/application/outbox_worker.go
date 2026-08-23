@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"log"
+	"log/slog"
 	"sync/atomic"
 	"time"
 
@@ -60,6 +61,7 @@ type OutboxWorker struct {
 	shutdownTimeout time.Duration
 	state           atomic.Int32
 	metrics         *metrics.OutboxMetrics
+	logger          *slog.Logger
 }
 
 type EventPublisher interface {
@@ -79,6 +81,7 @@ func NewOutboxWorker(
 	retryMaxDelay time.Duration,
 	shutdownTimeout time.Duration,
 	metrics *metrics.OutboxMetrics,
+	logger *slog.Logger,
 ) *OutboxWorker {
 	return &OutboxWorker{
 		repository:      repository,
@@ -90,6 +93,7 @@ func NewOutboxWorker(
 		retryMaxDelay:   retryMaxDelay,
 		shutdownTimeout: shutdownTimeout,
 		metrics:         metrics,
+		logger:          logger,
 	}
 }
 
@@ -141,7 +145,9 @@ func (w *OutboxWorker) Run(ctx context.Context) error {
 		}
 
 		w.advanceState(workerStopping)
-		log.Println("worker_stopping")
+		w.logger.Info(
+			"worker_stopping",
+		)
 
 		timer := time.NewTimer(w.shutdownTimeout)
 		defer timer.Stop()
@@ -149,7 +155,11 @@ func (w *OutboxWorker) Run(ctx context.Context) error {
 		select {
 		case <-timer.C:
 			timedOut.Store(true)
-			log.Println("worker_shutdown_timeout")
+			w.logger.Error(
+				"worker_shutdown_timeout",
+				"timeout",
+				w.shutdownTimeout,
+			)
 			procCancel()
 
 		case <-stopped:
@@ -160,13 +170,19 @@ func (w *OutboxWorker) Run(ctx context.Context) error {
 	defer ticker.Stop()
 
 	w.advanceState(workerRunning)
-	log.Println("worker_started")
+	w.logger.Info(
+		"worker_started",
+		"interval",
+		w.interval,
+		"batch_size",
+		w.batchSize,
+	)
 
 	for {
 		select {
 		case <-ctx.Done():
 			w.advanceState(workerStopped)
-			log.Println("worker_stopped")
+			w.logger.Info("worker_stopped")
 
 			if timedOut.Load() {
 				return ErrShutdownTimeout
@@ -181,8 +197,9 @@ func (w *OutboxWorker) Run(ctx context.Context) error {
 			}
 
 			if err := w.process(procCtx); err != nil {
-				log.Printf(
-					"outbox worker error: %v",
+				w.logger.Error(
+					"outbox_worker_error",
+					"error",
 					err,
 				)
 			}
@@ -196,6 +213,13 @@ func (w *OutboxWorker) process(ctx context.Context) error {
 		w.batchSize,
 	)
 	if err != nil {
+
+		w.logger.Error(
+			"claim_pending_failed",
+			"error",
+			err,
+		)
+
 		return err
 	}
 
@@ -219,9 +243,11 @@ func (w *OutboxWorker) process(ctx context.Context) error {
 					event.ID,
 					err.Error(),
 				); closeErr != nil {
-					log.Printf(
-						"mark outbox event closed failed: event_id=%s error=%v",
+					w.logger.Error(
+						"mark_outbox_event_closed",
+						"event_id",
 						event.EventID,
+						"error",
 						closeErr,
 					)
 				} else {
@@ -229,10 +255,15 @@ func (w *OutboxWorker) process(ctx context.Context) error {
 					w.metrics.Closed.Inc()
 				}
 
-				log.Printf(
-					"publish failed permanently: event_id=%s attempts=%d error=%v",
+				w.logger.Error(
+					"publish_failed_permanently",
+					"event_id",
 					event.EventID,
+					"event_type",
+					event.EventType,
+					"attempts",
 					event.Attempts,
+					"error",
 					err,
 				)
 
@@ -256,18 +287,28 @@ func (w *OutboxWorker) process(ctx context.Context) error {
 				err.Error(),
 				retryAt,
 			); markErr != nil {
-				log.Printf(
-					"mark outbox event failed: event_id=%s error=%v",
+				w.metrics.Failed.Inc()
+
+				w.logger.Error(
+					"mark_outbox_event_failed",
+					"event_id",
 					event.EventID,
+					"error",
 					markErr,
 				)
 			}
 
-			log.Printf(
-				"publish failed: event_id=%s retry=%d retry_at=%s error=%v",
+			w.logger.Warn(
+				"publish_failed",
+				"event_id",
 				event.EventID,
+				"event_type",
+				event.EventType,
+				"retry",
 				retryNumber,
+				"retry_at",
 				retryAt,
+				"error",
 				err,
 			)
 
@@ -281,10 +322,11 @@ func (w *OutboxWorker) process(ctx context.Context) error {
 			ctx,
 			event.ID,
 		); err != nil {
-			log.Printf(
-				"mark published failed: event_id=%s error=%v",
-				event.EventID,
-				err,
+			w.logger.Error(
+				"mark_published_failed",
+				"event_id", event.EventID,
+				"event_type", event.EventType,
+				"error", err,
 			)
 
 			continue
@@ -293,9 +335,11 @@ func (w *OutboxWorker) process(ctx context.Context) error {
 		// DB state successfully changed to PUBLISHED.
 		w.metrics.Published.Inc()
 
-		log.Printf(
-			"published: event_id=%s type=%s",
+		w.logger.Info(
+			"event_published",
+			"event_id",
 			event.EventID,
+			"event_type",
 			event.EventType,
 		)
 	}
