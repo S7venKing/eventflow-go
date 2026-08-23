@@ -10,10 +10,12 @@ import (
 	"time"
 
 	"github.com/joho/godotenv"
+	"github.com/prometheus/client_golang/prometheus"
 
 	"github.com/s7venking/eventflow/internal/config"
 	"github.com/s7venking/eventflow/internal/event/application"
 	"github.com/s7venking/eventflow/internal/event/domain"
+	"github.com/s7venking/eventflow/internal/metrics"
 	"github.com/s7venking/eventflow/internal/platform/postgres"
 	httptransport "github.com/s7venking/eventflow/internal/transport/http"
 )
@@ -143,6 +145,16 @@ func main() {
 	)
 
 	// ========================================
+	// Prometheus Metrics
+	// ========================================
+
+	metricsRegistry := prometheus.NewRegistry()
+
+	outboxMetrics := metrics.NewOutboxMetrics(
+		metricsRegistry,
+	)
+
+	// ========================================
 	// HTTP
 	// ========================================
 
@@ -157,6 +169,7 @@ func main() {
 	router := httptransport.NewRouter(
 		eventHandler,
 		healthHandler,
+		metricsRegistry,
 	)
 
 	// ========================================
@@ -179,8 +192,10 @@ func main() {
 	)
 	defer stop()
 
-	//WORKER
-	// Outbox Publisher
+	// ========================================
+	// WORKER
+	// ========================================
+
 	publisher := application.NewLogPublisher()
 
 	outboxWorker := application.NewOutboxWorker(
@@ -192,6 +207,7 @@ func main() {
 		1*time.Second,
 		30*time.Second,
 		cfg.ShutdownTimeout,
+		outboxMetrics,
 	)
 
 	workerErrors := make(chan error, 1)
@@ -230,8 +246,8 @@ func main() {
 		log.Println("shutdown_signal_received")
 	}
 
-	// Restore default signal handling so a second SIGINT/SIGTERM kills
-	// the process immediately instead of being swallowed.
+	// Restore default signal handling so a second SIGINT/SIGTERM
+	// kills the process immediately instead of being swallowed.
 	stop()
 
 	// ========================================
@@ -254,8 +270,7 @@ func main() {
 	log.Println("HTTP server stopped")
 
 	// The worker has been draining since the signal arrived and bounds
-	// its own exit with cfg.ShutdownTimeout; the extra grace here only
-	// guards against a publisher that ignores context cancellation.
+	// its own exit with cfg.ShutdownTimeout.
 	select {
 	case err := <-workerErrors:
 		if err != nil {

@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/s7venking/eventflow/internal/event/domain"
+	"github.com/s7venking/eventflow/internal/metrics"
 	"github.com/s7venking/eventflow/internal/platform/postgres"
 )
 
@@ -58,6 +59,7 @@ type OutboxWorker struct {
 	retryMaxDelay   time.Duration
 	shutdownTimeout time.Duration
 	state           atomic.Int32
+	metrics         *metrics.OutboxMetrics
 }
 
 type EventPublisher interface {
@@ -76,6 +78,7 @@ func NewOutboxWorker(
 	retryBaseDelay time.Duration,
 	retryMaxDelay time.Duration,
 	shutdownTimeout time.Duration,
+	metrics *metrics.OutboxMetrics,
 ) *OutboxWorker {
 	return &OutboxWorker{
 		repository:      repository,
@@ -86,6 +89,7 @@ func NewOutboxWorker(
 		retryBaseDelay:  retryBaseDelay,
 		retryMaxDelay:   retryMaxDelay,
 		shutdownTimeout: shutdownTimeout,
+		metrics:         metrics,
 	}
 }
 
@@ -198,11 +202,17 @@ func (w *OutboxWorker) process(ctx context.Context) error {
 	for _, event := range events {
 		if err := w.publisher.Publish(ctx, event); err != nil {
 
+			// Context cancellation is part of worker lifecycle,
+			// not a publish failure.
 			if errors.Is(err, context.Canceled) ||
 				errors.Is(err, context.DeadlineExceeded) {
 				return err
 			}
 
+			// Real publish failure.
+			w.metrics.Failed.Inc()
+
+			// Max retries reached -> CLOSE.
 			if event.Attempts >= w.maxRetries {
 				if closeErr := w.repository.MarkClose(
 					ctx,
@@ -210,10 +220,13 @@ func (w *OutboxWorker) process(ctx context.Context) error {
 					err.Error(),
 				); closeErr != nil {
 					log.Printf(
-						"mark outbox event closed: event_id=%s error=%v",
+						"mark outbox event closed failed: event_id=%s error=%v",
 						event.EventID,
 						closeErr,
 					)
+				} else {
+					// Only count CLOSE when DB update succeeds.
+					w.metrics.Closed.Inc()
 				}
 
 				log.Printf(
@@ -226,6 +239,7 @@ func (w *OutboxWorker) process(ctx context.Context) error {
 				continue
 			}
 
+			// Retry number is based on the current Attempts.
 			retryNumber := event.Attempts + 1
 
 			delay := RetryDelay(
@@ -260,6 +274,9 @@ func (w *OutboxWorker) process(ctx context.Context) error {
 			continue
 		}
 
+		// Publish succeeded.
+		// Only consider the event successfully published
+		// after the database state is updated.
 		if err := w.repository.MarkPublished(
 			ctx,
 			event.ID,
@@ -273,13 +290,15 @@ func (w *OutboxWorker) process(ctx context.Context) error {
 			continue
 		}
 
+		// DB state successfully changed to PUBLISHED.
+		w.metrics.Published.Inc()
+
 		log.Printf(
 			"published: event_id=%s type=%s",
 			event.EventID,
 			event.EventType,
 		)
 	}
-
 	return nil
 }
 
