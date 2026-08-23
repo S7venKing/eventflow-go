@@ -3,7 +3,6 @@ package application
 import (
 	"context"
 	"errors"
-	"log"
 	"log/slog"
 	"sync/atomic"
 	"time"
@@ -68,6 +67,7 @@ type EventPublisher interface {
 	Publish(
 		ctx context.Context,
 		event domain.OutboxEvent,
+		logger *slog.Logger,
 	) error
 }
 
@@ -224,7 +224,7 @@ func (w *OutboxWorker) process(ctx context.Context) error {
 	}
 
 	for _, event := range events {
-		if err := w.publisher.Publish(ctx, event); err != nil {
+		if err := w.publisher.Publish(ctx, event, w.logger); err != nil {
 
 			// Context cancellation is part of worker lifecycle,
 			// not a publish failure.
@@ -355,12 +355,12 @@ func NewLogPublisher() *LogPublisher {
 func (p *LogPublisher) Publish(
 	ctx context.Context,
 	event domain.OutboxEvent,
+	logger *slog.Logger,
 ) error {
-	log.Printf(
-		"publish event: id=%s type=%s payload=%s",
-		event.EventID,
-		event.EventType,
-		string(event.Payload),
+	logger.Info(
+		"publish_event",
+		"event_id", event.EventID,
+		"event_type", event.EventType,
 	)
 
 	return nil

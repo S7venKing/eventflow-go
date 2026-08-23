@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"log"
 	"net/http"
 	"os"
 	"os/signal"
@@ -23,11 +22,30 @@ import (
 
 func main() {
 	// ========================================
+	// Logger
+	// ========================================
+
+	appLogger := logger.New()
+
+	appLogger.Info(
+		"application_starting",
+		"service", "eventflow",
+	)
+
+	workerLogger := appLogger.With(
+		"service", "eventflow",
+		"component", "outbox-worker",
+	)
+
+	// ========================================
 	// Environment
 	// ========================================
 
 	if err := godotenv.Load(); err != nil {
-		log.Printf("warning: .env not loaded")
+		appLogger.Warn(
+			"environment_file_not_loaded",
+			"error", err,
+		)
 	}
 
 	// ========================================
@@ -36,24 +54,29 @@ func main() {
 
 	cfg, err := config.Load()
 	if err != nil {
-		log.Fatal(err)
+		appLogger.Error(
+			"config_load_failed",
+			"error", err,
+		)
+
+		return
 	}
 
 	if err := cfg.Database.Validate(); err != nil {
-		log.Fatal(err)
+		appLogger.Error(
+			"database_config_invalid",
+			"error", err,
+		)
+
+		return
 	}
 
-	log.Printf(
-		"database configured: %s",
-		cfg.Database.URL,
-	)
-
-	log.Printf(
-		"database pool: min=%d max=%d lifetime=%s idle=%s",
-		cfg.Database.MinConns,
-		cfg.Database.MaxConns,
-		cfg.Database.MaxConnLifetime,
-		cfg.Database.MaxConnIdleTime,
+	appLogger.Info(
+		"database_configured",
+		"min_connections", cfg.Database.MinConns,
+		"max_connections", cfg.Database.MaxConns,
+		"max_connection_lifetime", cfg.Database.MaxConnLifetime,
+		"max_connection_idle_time", cfg.Database.MaxConnIdleTime,
 	)
 
 	// ========================================
@@ -71,10 +94,12 @@ func main() {
 		cfg.Database,
 	)
 	if err != nil {
-		log.Fatalf(
-			"create database pool: %v",
-			err,
+		appLogger.Error(
+			"database_connection_create_failed",
+			"error", err,
 		)
+
+		return
 	}
 
 	defer db.Close()
@@ -84,26 +109,34 @@ func main() {
 	// ========================================
 
 	if err := db.Ping(ctx); err != nil {
-		log.Fatalf(
-			"database ping failed: %v",
-			err,
+		appLogger.Error(
+			"database_ping_failed",
+			"error", err,
 		)
+
+		return
 	}
 
-	log.Println("database connection established")
+	appLogger.Info(
+		"database_connection_established",
+	)
 
 	// ========================================
 	// Migration
 	// ========================================
 
 	if err := db.Migrate(ctx); err != nil {
-		log.Fatalf(
-			"database migration failed: %v",
-			err,
+		appLogger.Error(
+			"database_migration_failed",
+			"error", err,
 		)
+
+		return
 	}
 
-	log.Println("database migration completed")
+	appLogger.Info(
+		"database_migration_completed",
+	)
 
 	// ========================================
 	// Repository
@@ -128,16 +161,9 @@ func main() {
 		registry.RegisterSchema(schema)
 	}
 
-	log.Printf(
-		"schema registry initialized: %d schemas",
-		len(schemas),
-	)
-
-	appLogger := logger.New()
-
-	workerLogger := appLogger.With(
-		"service", "eventflow",
-		"component", "outbox-worker",
+	appLogger.Info(
+		"schema_registry_initialized",
+		"schema_count", len(schemas),
 	)
 
 	// ========================================
@@ -160,6 +186,10 @@ func main() {
 
 	outboxMetrics := metrics.NewOutboxMetrics(
 		metricsRegistry,
+	)
+
+	appLogger.Info(
+		"metrics_initialized",
 	)
 
 	// ========================================
@@ -232,7 +262,10 @@ func main() {
 	serverErrors := make(chan error, 1)
 
 	go func() {
-		log.Println("eventflow API running on :4053")
+		appLogger.Info(
+			"http_server_started",
+			"address", server.Addr,
+		)
 
 		if err := server.ListenAndServe(); err != nil &&
 			err != http.ErrServerClosed {
@@ -246,22 +279,29 @@ func main() {
 
 	select {
 	case err := <-serverErrors:
-		log.Fatalf(
-			"server failed: %v",
-			err,
+		appLogger.Error(
+			"http_server_failed",
+			"error", err,
 		)
 
 	case <-rootCtx.Done():
-		log.Println("shutdown_signal_received")
+		appLogger.Info(
+			"shutdown_signal_received",
+		)
 	}
 
-	// Restore default signal handling so a second SIGINT/SIGTERM
-	// kills the process immediately instead of being swallowed.
+	// Restore default signal handling so a second
+	// SIGINT/SIGTERM kills the process immediately.
 	stop()
 
 	// ========================================
 	// Graceful Shutdown
 	// ========================================
+
+	appLogger.Info(
+		"application_shutdown_started",
+		"timeout", cfg.ShutdownTimeout,
+	)
 
 	shutdownCtx, cancel := context.WithTimeout(
 		context.Background(),
@@ -270,28 +310,45 @@ func main() {
 	defer cancel()
 
 	if err := server.Shutdown(shutdownCtx); err != nil {
-		log.Printf(
-			"HTTP server shutdown failed: %v",
-			err,
+		appLogger.Error(
+			"http_server_shutdown_failed",
+			"error", err,
 		)
 	}
 
-	log.Println("HTTP server stopped")
+	appLogger.Info(
+		"http_server_stopped",
+	)
 
-	// The worker has been draining since the signal arrived and bounds
-	// its own exit with cfg.ShutdownTimeout.
+	// ========================================
+	// Wait Worker
+	// ========================================
+
 	select {
 	case err := <-workerErrors:
 		if err != nil {
-			log.Printf(
-				"outbox worker stopped with error: %v",
-				err,
+			appLogger.Error(
+				"outbox_worker_stopped_with_error",
+				"error", err,
+			)
+		} else {
+			appLogger.Info(
+				"outbox_worker_stopped",
 			)
 		}
 
 	case <-time.After(cfg.ShutdownTimeout + 5*time.Second):
-		log.Println("outbox worker did not stop in time")
+		appLogger.Error(
+			"outbox_worker_shutdown_timeout",
+			"timeout", cfg.ShutdownTimeout+5*time.Second,
+		)
 	}
 
-	log.Println("application_stopped")
+	// ========================================
+	// Application Stopped
+	// ========================================
+
+	appLogger.Info(
+		"application_stopped",
+	)
 }
