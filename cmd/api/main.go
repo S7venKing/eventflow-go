@@ -208,6 +208,7 @@ func main() {
 		eventHandler,
 		healthHandler,
 		metricsRegistry,
+		appLogger,
 	)
 
 	// ========================================
