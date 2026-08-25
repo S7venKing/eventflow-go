@@ -9,6 +9,7 @@ import (
 
 type Config struct {
 	Database        DatabaseConfig
+	Outbox          OutboxConfig
 	ShutdownTimeout time.Duration
 }
 
@@ -18,6 +19,44 @@ type DatabaseConfig struct {
 	MinConns        int32
 	MaxConnLifetime time.Duration
 	MaxConnIdleTime time.Duration
+}
+
+// OutboxConfig controls how many outbox workers run and how hard each one
+// polls. Every worker shares the same repository, pool, publisher and
+// metrics, and competes for events through ClaimPending, so these values
+// change throughput only, never the outbox state machine.
+type OutboxConfig struct {
+	Workers   int
+	BatchSize int
+	Interval  time.Duration
+}
+
+const (
+	defaultOutboxWorkers   = 1
+	defaultOutboxBatchSize = 100
+	defaultOutboxInterval  = 5 * time.Second
+)
+
+func (c OutboxConfig) Validate() error {
+	if c.Workers <= 0 {
+		return fmt.Errorf(
+			"OUTBOX_WORKERS must be greater than 0",
+		)
+	}
+
+	if c.BatchSize <= 0 {
+		return fmt.Errorf(
+			"OUTBOX_BATCH_SIZE must be greater than 0",
+		)
+	}
+
+	if c.Interval <= 0 {
+		return fmt.Errorf(
+			"OUTBOX_INTERVAL must be greater than 0",
+		)
+	}
+
+	return nil
 }
 
 func (c DatabaseConfig) Validate() error {
@@ -101,6 +140,11 @@ func Load() (Config, error) {
 		return Config{}, err
 	}
 
+	outbox, err := loadOutbox()
+	if err != nil {
+		return Config{}, err
+	}
+
 	return Config{
 		Database: DatabaseConfig{
 			URL:             databaseURL,
@@ -109,7 +153,40 @@ func Load() (Config, error) {
 			MaxConnLifetime: maxLifetime,
 			MaxConnIdleTime: maxIdleTime,
 		},
+		Outbox:          outbox,
 		ShutdownTimeout: shutdownTimeout,
+	}, nil
+}
+
+func loadOutbox() (OutboxConfig, error) {
+	workers, err := getIntWithDefault(
+		"OUTBOX_WORKERS",
+		defaultOutboxWorkers,
+	)
+	if err != nil {
+		return OutboxConfig{}, err
+	}
+
+	batchSize, err := getIntWithDefault(
+		"OUTBOX_BATCH_SIZE",
+		defaultOutboxBatchSize,
+	)
+	if err != nil {
+		return OutboxConfig{}, err
+	}
+
+	interval, err := getDurationWithDefault(
+		"OUTBOX_INTERVAL",
+		defaultOutboxInterval,
+	)
+	if err != nil {
+		return OutboxConfig{}, err
+	}
+
+	return OutboxConfig{
+		Workers:   workers,
+		BatchSize: batchSize,
+		Interval:  interval,
 	}, nil
 }
 
@@ -138,6 +215,36 @@ func getInt32(key string) (int32, error) {
 	}
 
 	return int32(result), nil
+}
+
+func getIntWithDefault(
+	key string,
+	fallback int,
+) (int, error) {
+	value := os.Getenv(key)
+
+	if value == "" {
+		return fallback, nil
+	}
+
+	result, err := strconv.Atoi(value)
+
+	if err != nil {
+		return 0, fmt.Errorf(
+			"%s must be an integer: %w",
+			key,
+			err,
+		)
+	}
+
+	if result <= 0 {
+		return 0, fmt.Errorf(
+			"%s must be greater than 0",
+			key,
+		)
+	}
+
+	return result, nil
 }
 
 func getDurationWithDefault(
