@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"sync"
 	"syscall"
 	"time"
 
@@ -71,6 +72,15 @@ func main() {
 		return
 	}
 
+	if err := cfg.Outbox.Validate(); err != nil {
+		appLogger.Error(
+			"outbox_config_invalid",
+			"error", err,
+		)
+
+		return
+	}
+
 	appLogger.Info(
 		"database_configured",
 		"min_connections", cfg.Database.MinConns,
@@ -78,6 +88,24 @@ func main() {
 		"max_connection_lifetime", cfg.Database.MaxConnLifetime,
 		"max_connection_idle_time", cfg.Database.MaxConnIdleTime,
 	)
+
+	appLogger.Info(
+		"outbox_configured",
+		"workers", cfg.Outbox.Workers,
+		"batch_size", cfg.Outbox.BatchSize,
+		"interval", cfg.Outbox.Interval,
+	)
+
+	// Each worker holds a pooled connection for the length of its claim
+	// transaction, so a pool smaller than the worker count makes the
+	// workers queue on connection acquisition instead of on Postgres.
+	if int(cfg.Database.MaxConns) < cfg.Outbox.Workers {
+		appLogger.Warn(
+			"outbox_workers_exceed_pool_size",
+			"workers", cfg.Outbox.Workers,
+			"max_connections", cfg.Database.MaxConns,
+		)
+	}
 
 	// ========================================
 	// Database
@@ -234,26 +262,50 @@ func main() {
 	// WORKER
 	// ========================================
 
+	// Every worker shares one repository, pool, publisher, metrics set and
+	// context. No event is assigned to a worker: they all call
+	// ClaimPending, and Postgres decides who gets what through
+	// FOR UPDATE SKIP LOCKED. worker_id only labels the log lines.
 	publisher := application.NewLogPublisher()
 
-	outboxWorker := application.NewOutboxWorker(
-		outboxRepository,
-		publisher,
-		5*time.Second,
-		100,
-		3,
-		1*time.Second,
-		30*time.Second,
-		cfg.ShutdownTimeout,
-		outboxMetrics,
-		workerLogger,
-	)
+	var workerGroup sync.WaitGroup
 
-	workerErrors := make(chan error, 1)
+	workerErrors := make(chan error, cfg.Outbox.Workers)
+
+	for i := 1; i <= cfg.Outbox.Workers; i++ {
+		outboxWorker := application.NewOutboxWorker(
+			outboxRepository,
+			publisher,
+			cfg.Outbox.Interval,
+			cfg.Outbox.BatchSize,
+			3,
+			1*time.Second,
+			30*time.Second,
+			cfg.ShutdownTimeout,
+			outboxMetrics,
+			workerLogger.With("worker_id", i),
+		)
+
+		workerGroup.Add(1)
+
+		go func() {
+			defer workerGroup.Done()
+
+			workerErrors <- outboxWorker.Run(rootCtx)
+		}()
+	}
+
+	workersStopped := make(chan struct{})
 
 	go func() {
-		workerErrors <- outboxWorker.Run(rootCtx)
+		workerGroup.Wait()
+		close(workersStopped)
 	}()
+
+	appLogger.Info(
+		"outbox_workers_started",
+		"workers", cfg.Outbox.Workers,
+	)
 
 	// ========================================
 	// Start Server
@@ -324,18 +376,26 @@ func main() {
 	// Wait Worker
 	// ========================================
 
+	// Every worker has been draining since the signal arrived and each
+	// bounds its own exit with cfg.ShutdownTimeout; the extra grace here
+	// only guards against a publisher that ignores context cancellation.
 	select {
-	case err := <-workerErrors:
-		if err != nil {
-			appLogger.Error(
-				"outbox_worker_stopped_with_error",
-				"error", err,
-			)
-		} else {
-			appLogger.Info(
-				"outbox_worker_stopped",
-			)
+	case <-workersStopped:
+		close(workerErrors)
+
+		for err := range workerErrors {
+			if err != nil {
+				appLogger.Error(
+					"outbox_worker_stopped_with_error",
+					"error", err,
+				)
+			}
 		}
+
+		appLogger.Info(
+			"outbox_workers_stopped",
+			"workers", cfg.Outbox.Workers,
+		)
 
 	case <-time.After(cfg.ShutdownTimeout + 5*time.Second):
 		appLogger.Error(
