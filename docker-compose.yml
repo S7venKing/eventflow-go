@@ -12,6 +12,14 @@ services:
     env_file:
       - .env
 
+    # Outbox concurrency knobs. Values set here override .env, so a
+    # benchmark run can change them from the shell without editing a file:
+    #   OUTBOX_WORKERS=4 docker compose up -d --force-recreate api
+    environment:
+      OUTBOX_WORKERS: ${OUTBOX_WORKERS:-1}
+      OUTBOX_BATCH_SIZE: ${OUTBOX_BATCH_SIZE:-10}
+      OUTBOX_INTERVAL: ${OUTBOX_INTERVAL:-5s}
+
     depends_on:
       postgres:
         condition: service_healthy
