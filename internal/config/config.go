@@ -29,12 +29,25 @@ type OutboxConfig struct {
 	Workers   int
 	BatchSize int
 	Interval  time.Duration
+
+	// StaleTimeout is how long an event may sit in PROCESSING before a
+	// worker reclaims it back to PENDING. It must comfortably exceed the
+	// longest legitimate publish (including the shutdown drain window),
+	// or a slow worker's events get reclaimed and published twice.
+	StaleTimeout time.Duration
+
+	// PublishFailureRate injects transient publish failures at this
+	// per-attempt probability. 0 disables injection; anything above it
+	// is a chaos knob for exercising retry and recovery, never a
+	// production setting.
+	PublishFailureRate float64
 }
 
 const (
-	defaultOutboxWorkers   = 1
-	defaultOutboxBatchSize = 100
-	defaultOutboxInterval  = 5 * time.Second
+	defaultOutboxWorkers      = 1
+	defaultOutboxBatchSize    = 100
+	defaultOutboxInterval     = 5 * time.Second
+	defaultOutboxStaleTimeout = 5 * time.Minute
 )
 
 func (c OutboxConfig) Validate() error {
@@ -53,6 +66,18 @@ func (c OutboxConfig) Validate() error {
 	if c.Interval <= 0 {
 		return fmt.Errorf(
 			"OUTBOX_INTERVAL must be greater than 0",
+		)
+	}
+
+	if c.StaleTimeout <= 0 {
+		return fmt.Errorf(
+			"OUTBOX_STALE_TIMEOUT must be greater than 0",
+		)
+	}
+
+	if c.PublishFailureRate < 0 || c.PublishFailureRate >= 1 {
+		return fmt.Errorf(
+			"PUBLISH_FAILURE_RATE must be in [0, 1)",
 		)
 	}
 
@@ -183,11 +208,58 @@ func loadOutbox() (OutboxConfig, error) {
 		return OutboxConfig{}, err
 	}
 
+	staleTimeout, err := getDurationWithDefault(
+		"OUTBOX_STALE_TIMEOUT",
+		defaultOutboxStaleTimeout,
+	)
+	if err != nil {
+		return OutboxConfig{}, err
+	}
+
+	failureRate, err := getFloatWithDefault(
+		"PUBLISH_FAILURE_RATE",
+		0,
+	)
+	if err != nil {
+		return OutboxConfig{}, err
+	}
+
+	if failureRate < 0 || failureRate >= 1 {
+		return OutboxConfig{}, fmt.Errorf(
+			"PUBLISH_FAILURE_RATE must be in [0, 1)",
+		)
+	}
+
 	return OutboxConfig{
-		Workers:   workers,
-		BatchSize: batchSize,
-		Interval:  interval,
+		Workers:            workers,
+		BatchSize:          batchSize,
+		Interval:           interval,
+		StaleTimeout:       staleTimeout,
+		PublishFailureRate: failureRate,
 	}, nil
+}
+
+func getFloatWithDefault(
+	key string,
+	fallback float64,
+) (float64, error) {
+	value := os.Getenv(key)
+
+	if value == "" {
+		return fallback, nil
+	}
+
+	result, err := strconv.ParseFloat(value, 64)
+
+	if err != nil {
+		return 0, fmt.Errorf(
+			"%s must be a number: %w",
+			key,
+			err,
+		)
+	}
+
+	return result, nil
 }
 
 func getInt32(key string) (int32, error) {

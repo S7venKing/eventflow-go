@@ -78,6 +78,26 @@ func main() {
 		"artificial per-event publish latency, to model a real broker",
 	)
 
+	failureRate := flag.Float64(
+		"failure-rate",
+		0,
+		"per-attempt transient publish failure probability in [0, 1); "+
+			"capped at 3 failures per event so every run converges",
+	)
+
+	poisonEvents := flag.Int(
+		"poison",
+		0,
+		"how many of the seeded events always fail to publish "+
+			"and must end in CLOSE",
+	)
+
+	staleTimeout := flag.Duration(
+		"stale-timeout",
+		5*time.Minute,
+		"reclaim PROCESSING events older than this back to PENDING",
+	)
+
 	maxConns := flag.Int(
 		"max-conns",
 		0,
@@ -112,6 +132,18 @@ func main() {
 		log.Fatal("interval must be greater than 0")
 	}
 
+	if *failureRate < 0 || *failureRate >= 1 {
+		log.Fatal("failure-rate must be in [0, 1)")
+	}
+
+	if *poisonEvents < 0 || *poisonEvents > *totalEvents {
+		log.Fatal("poison must be between 0 and events")
+	}
+
+	if *staleTimeout <= 0 {
+		log.Fatal("stale-timeout must be greater than 0")
+	}
+
 	poolSize := *maxConns
 
 	if poolSize <= 0 {
@@ -127,6 +159,9 @@ func main() {
 		interval:       *interval,
 		totalEvents:    *totalEvents,
 		publishLatency: *publishLatency,
+		failureRate:    *failureRate,
+		poisonEvents:   *poisonEvents,
+		staleTimeout:   *staleTimeout,
 		poolSize:       poolSize,
 		timeout:        *timeout,
 		databaseURL:    resolveDatabaseURL(*databaseURL),
@@ -142,6 +177,9 @@ type runConfig struct {
 	interval       time.Duration
 	totalEvents    int
 	publishLatency time.Duration
+	failureRate    float64
+	poisonEvents   int
+	staleTimeout   time.Duration
 	poolSize       int
 	timeout        time.Duration
 	databaseURL    string
@@ -266,19 +304,46 @@ func run(cfg runConfig) error {
 	}
 
 	log.Printf(
-		"seeding %d PENDING events (workers=%d batch=%d interval=%s pool=%d)",
+		"seeding %d PENDING events, %d of them poison (workers=%d batch=%d interval=%s pool=%d failure_rate=%.2f)",
 		cfg.totalEvents,
+		cfg.poisonEvents,
 		cfg.workers,
 		cfg.batchSize,
 		cfg.interval,
 		cfg.poolSize,
+		cfg.failureRate,
 	)
 
-	if err := reseed(setupCtx, db, cfg.totalEvents); err != nil {
+	if err := reseed(
+		setupCtx,
+		db,
+		cfg.totalEvents-cfg.poisonEvents,
+		cfg.poisonEvents,
+	); err != nil {
 		return err
 	}
 
-	publisher := newBenchPublisher(cfg.publishLatency)
+	benchPub := newBenchPublisher(cfg.publishLatency)
+
+	// The workers see one EventPublisher. With failure injection enabled
+	// it is the production FailingPublisher wrapping the counting
+	// publisher, so a failed attempt never reaches the counters: only
+	// deliveries are counted, exactly like a real broker.
+	var publisher application.EventPublisher = benchPub
+
+	var injector *application.FailingPublisher
+
+	if cfg.failureRate > 0 || cfg.poisonEvents > 0 {
+		injector = application.NewFailingPublisher(
+			benchPub,
+			cfg.failureRate,
+			3,
+			poisonEventType,
+		)
+
+		publisher = injector
+	}
+
 	repository := postgres.NewOutboxRepository(db)
 
 	// A fresh registry per run: the counters start at zero, and nothing is
@@ -310,6 +375,7 @@ func run(cfg runConfig) error {
 			time.Second,
 			30*time.Second,
 			30*time.Second,
+			cfg.staleTimeout,
 			outboxMetrics,
 			workerLogger.With("worker_id", i),
 		)
@@ -345,7 +411,7 @@ func run(cfg runConfig) error {
 		log.Printf("WARNING: %v", drainErr)
 	}
 
-	result := buildResult(cfg, counts, publisher, duration, start)
+	result := buildResult(cfg, counts, benchPub, injector, duration, start)
 
 	fmt.Print(result.report())
 
@@ -360,18 +426,41 @@ func run(cfg runConfig) error {
 	return nil
 }
 
+// poisonEventType marks events the FailingPublisher always fails, so a
+// matrix run can prove permanently failing events end in CLOSE without
+// blocking the rest of the queue.
+const poisonEventType = "poison.event"
+
 // reseed clears the outbox and inserts a fresh batch, so every concurrency
 // level starts from the same state instead of sharing one pool of events.
 func reseed(
 	ctx context.Context,
 	db *postgres.DB,
-	count int,
+	normal int,
+	poison int,
 ) error {
 	if _, err := db.Pool.Exec(
 		ctx,
 		"TRUNCATE TABLE outbox_events, events",
 	); err != nil {
 		return fmt.Errorf("truncate: %w", err)
+	}
+
+	if err := seedBatch(ctx, db, normal, "benchmark.event"); err != nil {
+		return err
+	}
+
+	return seedBatch(ctx, db, poison, poisonEventType)
+}
+
+func seedBatch(
+	ctx context.Context,
+	db *postgres.DB,
+	count int,
+	eventType string,
+) error {
+	if count <= 0 {
+		return nil
 	}
 
 	const query = `
@@ -382,7 +471,7 @@ func reseed(
 			SELECT
 				gen_random_uuid(),
 				gen_random_uuid(),
-				'benchmark.event',
+				$2,
 				1,
 				'outboxbench',
 				NOW(),
@@ -397,7 +486,7 @@ func reseed(
 		SELECT
 			gen_random_uuid(),
 			event_id,
-			'benchmark.event',
+			$2,
 			'{"benchmark": true}',
 			'PENDING',
 			0,
@@ -406,8 +495,18 @@ func reseed(
 		FROM seeded_events
 	`
 
-	if _, err := db.Pool.Exec(ctx, query, count); err != nil {
-		return fmt.Errorf("seed events: %w", err)
+	if _, err := db.Pool.Exec(
+		ctx,
+		query,
+		count,
+		eventType,
+	); err != nil {
+		return fmt.Errorf(
+			"seed %d %s events: %w",
+			count,
+			eventType,
+			err,
+		)
 	}
 
 	return nil
@@ -513,16 +612,28 @@ type result struct {
 	lost               int
 	publishCalls       int
 	distinct           int
+	publishAttempts    int
+	injectedFailures   int
 }
 
 func buildResult(
 	cfg runConfig,
 	counts outboxCounts,
 	publisher *benchPublisher,
+	injector *application.FailingPublisher,
 	duration time.Duration,
 	start time.Time,
 ) result {
 	distinct, duplicates, total, first := publisher.stats()
+
+	// Without injection every attempt reaches the counting publisher.
+	publishAttempts := total
+	injectedFailures := 0
+
+	if injector != nil {
+		publishAttempts = injector.Attempts()
+		injectedFailures = injector.InjectedFailures()
+	}
 
 	accounted := counts.published +
 		counts.closed +
@@ -547,6 +658,8 @@ func buildResult(
 		lost:               cfg.totalEvents - accounted,
 		publishCalls:       total,
 		distinct:           distinct,
+		publishAttempts:    publishAttempts,
+		injectedFailures:   injectedFailures,
 	}
 }
 
@@ -567,6 +680,9 @@ workers               %d
 batch_size            %d
 interval              %s
 publish_latency       %s
+failure_rate          %.2f
+poison_events         %d
+stale_timeout         %s
 pool_size             %d
 total_events          %d
 ----------------------------------------
@@ -581,6 +697,8 @@ remaining_processing  %d
 duplicate             %d
 lost                  %d
 ----------------------------------------
+publish_attempts      %d
+injected_failures     %d
 publish_calls         %d (distinct %d)
 ========================================
 
@@ -591,6 +709,9 @@ publish_calls         %d (distinct %d)
 		r.cfg.batchSize,
 		r.cfg.interval,
 		r.cfg.publishLatency,
+		r.cfg.failureRate,
+		r.cfg.poisonEvents,
+		r.cfg.staleTimeout,
 		r.cfg.poolSize,
 		r.cfg.totalEvents,
 		r.duration.Round(time.Millisecond),
@@ -602,6 +723,8 @@ publish_calls         %d (distinct %d)
 		r.processing,
 		r.duplicate,
 		r.lost,
+		r.publishAttempts,
+		r.injectedFailures,
 		r.publishCalls,
 		r.distinct,
 		markdownHeader,

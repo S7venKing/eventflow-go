@@ -94,6 +94,8 @@ func main() {
 		"workers", cfg.Outbox.Workers,
 		"batch_size", cfg.Outbox.BatchSize,
 		"interval", cfg.Outbox.Interval,
+		"stale_timeout", cfg.Outbox.StaleTimeout,
+		"publish_failure_rate", cfg.Outbox.PublishFailureRate,
 	)
 
 	// Each worker holds a pooled connection for the length of its claim
@@ -267,7 +269,30 @@ func main() {
 	// context. No event is assigned to a worker: they all call
 	// ClaimPending, and Postgres decides who gets what through
 	// FOR UPDATE SKIP LOCKED. worker_id only labels the log lines.
-	publisher := application.NewLogPublisher()
+	var publisher application.EventPublisher = application.NewLogPublisher()
+
+	if cfg.Outbox.PublishFailureRate > 0 {
+		appLogger.Warn(
+			"publish_failure_injection_enabled",
+			"rate", cfg.Outbox.PublishFailureRate,
+		)
+
+		publisher = application.NewFailingPublisher(
+			publisher,
+			cfg.Outbox.PublishFailureRate,
+			0,
+		)
+	}
+
+	// A stale timeout below the shutdown drain window can reclaim rows a
+	// slow-but-alive worker is still publishing, which double-publishes.
+	if cfg.Outbox.StaleTimeout <= cfg.ShutdownTimeout {
+		appLogger.Warn(
+			"outbox_stale_timeout_below_shutdown_timeout",
+			"stale_timeout", cfg.Outbox.StaleTimeout,
+			"shutdown_timeout", cfg.ShutdownTimeout,
+		)
+	}
 
 	var workerGroup sync.WaitGroup
 
@@ -283,6 +308,7 @@ func main() {
 			1*time.Second,
 			30*time.Second,
 			cfg.ShutdownTimeout,
+			cfg.Outbox.StaleTimeout,
 			outboxMetrics,
 			workerLogger.With("worker_id", i),
 		)
