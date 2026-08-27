@@ -56,6 +56,21 @@ func TestLoadOutboxDefaults(t *testing.T) {
 			defaultOutboxInterval,
 		)
 	}
+
+	if cfg.Outbox.StaleTimeout != defaultOutboxStaleTimeout {
+		t.Errorf(
+			"StaleTimeout = %s, want %s",
+			cfg.Outbox.StaleTimeout,
+			defaultOutboxStaleTimeout,
+		)
+	}
+
+	if cfg.Outbox.PublishFailureRate != 0 {
+		t.Errorf(
+			"PublishFailureRate = %f, want 0",
+			cfg.Outbox.PublishFailureRate,
+		)
+	}
 }
 
 func TestLoadOutboxFromEnvironment(t *testing.T) {
@@ -64,6 +79,8 @@ func TestLoadOutboxFromEnvironment(t *testing.T) {
 	t.Setenv("OUTBOX_WORKERS", "8")
 	t.Setenv("OUTBOX_BATCH_SIZE", "10")
 	t.Setenv("OUTBOX_INTERVAL", "250ms")
+	t.Setenv("OUTBOX_STALE_TIMEOUT", "90s")
+	t.Setenv("PUBLISH_FAILURE_RATE", "0.25")
 
 	cfg, err := Load()
 	if err != nil {
@@ -82,6 +99,20 @@ func TestLoadOutboxFromEnvironment(t *testing.T) {
 		t.Errorf(
 			"Interval = %s, want 250ms",
 			cfg.Outbox.Interval,
+		)
+	}
+
+	if cfg.Outbox.StaleTimeout != 90*time.Second {
+		t.Errorf(
+			"StaleTimeout = %s, want 90s",
+			cfg.Outbox.StaleTimeout,
+		)
+	}
+
+	if cfg.Outbox.PublishFailureRate != 0.25 {
+		t.Errorf(
+			"PublishFailureRate = %f, want 0.25",
+			cfg.Outbox.PublishFailureRate,
 		)
 	}
 
@@ -105,6 +136,13 @@ func TestLoadOutboxRejectsInvalidValues(t *testing.T) {
 		{"zero interval", "OUTBOX_INTERVAL", "0s"},
 		{"negative interval", "OUTBOX_INTERVAL", "-1s"},
 		{"unparsable interval", "OUTBOX_INTERVAL", "5"},
+		{"zero stale timeout", "OUTBOX_STALE_TIMEOUT", "0s"},
+		{"negative stale timeout", "OUTBOX_STALE_TIMEOUT", "-1m"},
+		{"unparsable stale timeout", "OUTBOX_STALE_TIMEOUT", "soon"},
+		{"negative failure rate", "PUBLISH_FAILURE_RATE", "-0.1"},
+		{"failure rate of one", "PUBLISH_FAILURE_RATE", "1"},
+		{"failure rate above one", "PUBLISH_FAILURE_RATE", "1.5"},
+		{"non numeric failure rate", "PUBLISH_FAILURE_RATE", "often"},
 	}
 
 	for _, tc := range cases {
@@ -129,9 +167,10 @@ func TestLoadOutboxRejectsInvalidValues(t *testing.T) {
 
 func TestOutboxConfigValidate(t *testing.T) {
 	valid := OutboxConfig{
-		Workers:   4,
-		BatchSize: 10,
-		Interval:  time.Second,
+		Workers:      4,
+		BatchSize:    10,
+		Interval:     time.Second,
+		StaleTimeout: time.Minute,
 	}
 
 	if err := valid.Validate(); err != nil {
@@ -145,25 +184,46 @@ func TestOutboxConfigValidate(t *testing.T) {
 		{
 			name: "no workers",
 			cfg: OutboxConfig{
-				Workers:   0,
-				BatchSize: 10,
-				Interval:  time.Second,
+				Workers:      0,
+				BatchSize:    10,
+				Interval:     time.Second,
+				StaleTimeout: time.Minute,
 			},
 		},
 		{
 			name: "no batch size",
 			cfg: OutboxConfig{
-				Workers:   1,
-				BatchSize: 0,
-				Interval:  time.Second,
+				Workers:      1,
+				BatchSize:    0,
+				Interval:     time.Second,
+				StaleTimeout: time.Minute,
 			},
 		},
 		{
 			name: "no interval",
 			cfg: OutboxConfig{
+				Workers:      1,
+				BatchSize:    10,
+				Interval:     0,
+				StaleTimeout: time.Minute,
+			},
+		},
+		{
+			name: "no stale timeout",
+			cfg: OutboxConfig{
 				Workers:   1,
 				BatchSize: 10,
-				Interval:  0,
+				Interval:  time.Second,
+			},
+		},
+		{
+			name: "failure rate at one",
+			cfg: OutboxConfig{
+				Workers:            1,
+				BatchSize:          10,
+				Interval:           time.Second,
+				StaleTimeout:       time.Minute,
+				PublishFailureRate: 1,
 			},
 		},
 	}
