@@ -21,15 +21,96 @@ services:
       OUTBOX_INTERVAL: ${OUTBOX_INTERVAL:-5s}
       OUTBOX_STALE_TIMEOUT: ${OUTBOX_STALE_TIMEOUT:-5m}
       PUBLISH_FAILURE_RATE: ${PUBLISH_FAILURE_RATE:-0}
+      OUTBOX_PUBLISHER: ${OUTBOX_PUBLISHER:-kafka}
+
+      # Inside the compose network the broker is reached by service name
+      # on its INTERNAL listener. .env carries the host-side value
+      # (localhost:9092) for running the binary or outboxbench outside
+      # Docker; this override wins inside the container.
+      KAFKA_BROKERS: kafka:9092
+      KAFKA_TOPIC: ${KAFKA_TOPIC:-eventflow.events}
 
     depends_on:
       postgres:
         condition: service_healthy
+      # The topic exists before the API's first publish attempt. This is
+      # orchestration only: the API itself starts without Kafka and the
+      # outbox worker simply retries until the broker is back.
+      kafka-init:
+        condition: service_completed_successfully
 
     restart: unless-stopped
 
     networks:
       - eventflow-net
+
+  kafka:
+    image: apache/kafka:3.9.1
+    container_name: eventflow-kafka
+
+    # Single-node KRaft (no ZooKeeper). Two client listeners because a
+    # broker advertises one address per listener and the two audiences
+    # need different ones:
+    #   INTERNAL  kafka:9092      -> containers on eventflow-net
+    #   EXTERNAL  localhost:9092  -> the host, via the 9092:9094 port map
+    environment:
+      CLUSTER_ID: MkU3OEVBNTcwNTJENDM2Qk
+      KAFKA_NODE_ID: 1
+      KAFKA_PROCESS_ROLES: broker,controller
+      KAFKA_CONTROLLER_QUORUM_VOTERS: 1@kafka:9093
+      KAFKA_LISTENERS: INTERNAL://0.0.0.0:9092,EXTERNAL://0.0.0.0:9094,CONTROLLER://0.0.0.0:9093
+      KAFKA_ADVERTISED_LISTENERS: INTERNAL://kafka:9092,EXTERNAL://localhost:9092
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: INTERNAL:PLAINTEXT,EXTERNAL:PLAINTEXT,CONTROLLER:PLAINTEXT
+      KAFKA_INTER_BROKER_LISTENER_NAME: INTERNAL
+      KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
+      KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: 0
+      # Topics are created explicitly by kafka-init, never by a produce.
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: "false"
+
+    ports:
+      - "9092:9094"
+
+    networks:
+      - eventflow-net
+
+    healthcheck:
+      test: ["CMD-SHELL", "/opt/kafka/bin/kafka-topics.sh --bootstrap-server localhost:9092 --list >/dev/null 2>&1"]
+      interval: 10s
+      timeout: 10s
+      retries: 12
+      start_period: 20s
+
+    restart: unless-stopped
+
+  # One-shot: creates the events topic once the broker is healthy, then
+  # exits. Idempotent (--if-not-exists), so repeated compose up is safe.
+  kafka-init:
+    image: apache/kafka:3.9.1
+    container_name: eventflow-kafka-init
+
+    depends_on:
+      kafka:
+        condition: service_healthy
+
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        set -e
+        /opt/kafka/bin/kafka-topics.sh --bootstrap-server kafka:9092 \
+          --create --if-not-exists \
+          --topic "${KAFKA_TOPIC:-eventflow.events}" \
+          --partitions "${KAFKA_TOPIC_PARTITIONS:-3}" \
+          --replication-factor 1
+        /opt/kafka/bin/kafka-topics.sh --bootstrap-server kafka:9092 \
+          --describe --topic "${KAFKA_TOPIC:-eventflow.events}"
+
+    networks:
+      - eventflow-net
+
+    restart: "no"
 
   postgres:
     image: postgres:17

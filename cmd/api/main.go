@@ -16,6 +16,7 @@ import (
 	"github.com/s7venking/eventflow/internal/event/application"
 	"github.com/s7venking/eventflow/internal/event/domain"
 	"github.com/s7venking/eventflow/internal/metrics"
+	kafkaplatform "github.com/s7venking/eventflow/internal/platform/kafka"
 	"github.com/s7venking/eventflow/internal/platform/logger"
 	"github.com/s7venking/eventflow/internal/platform/postgres"
 	httptransport "github.com/s7venking/eventflow/internal/transport/http"
@@ -75,6 +76,15 @@ func main() {
 	if err := cfg.Outbox.Validate(); err != nil {
 		appLogger.Error(
 			"outbox_config_invalid",
+			"error", err,
+		)
+
+		return
+	}
+
+	if err := cfg.Kafka.Validate(); err != nil {
+		appLogger.Error(
+			"kafka_config_invalid",
 			"error", err,
 		)
 
@@ -218,6 +228,10 @@ func main() {
 		metricsRegistry,
 	)
 
+	kafkaMetrics := metrics.NewKafkaMetrics(
+		metricsRegistry,
+	)
+
 	appLogger.Info(
 		"metrics_initialized",
 	)
@@ -269,7 +283,40 @@ func main() {
 	// context. No event is assigned to a worker: they all call
 	// ClaimPending, and Postgres decides who gets what through
 	// FOR UPDATE SKIP LOCKED. worker_id only labels the log lines.
-	var publisher application.EventPublisher = application.NewLogPublisher()
+	//
+	// The workers only ever see the EventPublisher interface. Kafka lives
+	// behind it in internal/platform/kafka; a nil Publish means the broker
+	// acknowledged the write, which is what lets the worker mark PUBLISHED.
+	var publisher application.EventPublisher
+
+	var kafkaPublisher *kafkaplatform.Publisher
+
+	switch cfg.Outbox.Publisher {
+	case config.OutboxPublisherKafka:
+		kafkaPublisher = kafkaplatform.NewPublisher(
+			cfg.Kafka,
+			kafkaMetrics,
+		)
+
+		publisher = kafkaPublisher
+
+		appLogger.Info(
+			"kafka_publisher_configured",
+			"brokers", cfg.Kafka.Brokers,
+			"topic", cfg.Kafka.Topic,
+			"client_id", cfg.Kafka.ClientID,
+			"write_timeout", cfg.Kafka.WriteTimeout,
+			"max_attempts", cfg.Kafka.MaxAttempts,
+		)
+
+	default:
+		publisher = application.NewLogPublisher()
+
+		appLogger.Warn(
+			"log_publisher_configured",
+			"reason", "OUTBOX_PUBLISHER=log, events are logged, not sent to Kafka",
+		)
+	}
 
 	if cfg.Outbox.PublishFailureRate > 0 {
 		appLogger.Warn(
@@ -429,6 +476,24 @@ func main() {
 			"outbox_worker_shutdown_timeout",
 			"timeout", cfg.ShutdownTimeout+5*time.Second,
 		)
+	}
+
+	// ========================================
+	// Close Publisher
+	// ========================================
+
+	// Only after the workers are done, so no publish is in flight.
+	if kafkaPublisher != nil {
+		if err := kafkaPublisher.Close(); err != nil {
+			appLogger.Error(
+				"kafka_publisher_close_failed",
+				"error", err,
+			)
+		} else {
+			appLogger.Info(
+				"kafka_publisher_closed",
+			)
+		}
 	}
 
 	// ========================================

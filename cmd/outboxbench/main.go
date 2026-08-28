@@ -30,6 +30,7 @@ import (
 	"log/slog"
 	"os"
 	"os/signal"
+	"strings"
 	"sync"
 	"syscall"
 	"time"
@@ -42,6 +43,7 @@ import (
 	"github.com/s7venking/eventflow/internal/event/application"
 	"github.com/s7venking/eventflow/internal/event/domain"
 	"github.com/s7venking/eventflow/internal/metrics"
+	kafkaplatform "github.com/s7venking/eventflow/internal/platform/kafka"
 	"github.com/s7venking/eventflow/internal/platform/postgres"
 )
 
@@ -98,6 +100,24 @@ func main() {
 		"reclaim PROCESSING events older than this back to PENDING",
 	)
 
+	publisherKind := flag.String(
+		"publisher",
+		publisherInMemory,
+		"where events go: inmemory (count only) or kafka (real broker)",
+	)
+
+	kafkaBrokers := flag.String(
+		"kafka-brokers",
+		"",
+		"comma-separated brokers (default: KAFKA_BROKERS, then localhost:9092)",
+	)
+
+	kafkaTopic := flag.String(
+		"kafka-topic",
+		"",
+		"topic to publish to (default: KAFKA_TOPIC, then eventflow.events)",
+	)
+
 	maxConns := flag.Int(
 		"max-conns",
 		0,
@@ -144,6 +164,15 @@ func main() {
 		log.Fatal("stale-timeout must be greater than 0")
 	}
 
+	if *publisherKind != publisherInMemory &&
+		*publisherKind != publisherKafka {
+		log.Fatalf(
+			"publisher must be %s or %s",
+			publisherInMemory,
+			publisherKafka,
+		)
+	}
+
 	poolSize := *maxConns
 
 	if poolSize <= 0 {
@@ -166,10 +195,18 @@ func main() {
 		timeout:        *timeout,
 		databaseURL:    resolveDatabaseURL(*databaseURL),
 		out:            *out,
+		publisher:      *publisherKind,
+		kafkaBrokers:   resolveKafkaBrokers(*kafkaBrokers),
+		kafkaTopic:     resolveKafkaTopic(*kafkaTopic),
 	}); err != nil {
 		log.Fatal(err)
 	}
 }
+
+const (
+	publisherInMemory = "inmemory"
+	publisherKafka    = "kafka"
+)
 
 type runConfig struct {
 	workers        int
@@ -184,6 +221,49 @@ type runConfig struct {
 	timeout        time.Duration
 	databaseURL    string
 	out            string
+	publisher      string
+	kafkaBrokers   []string
+	kafkaTopic     string
+}
+
+func resolveKafkaBrokers(override string) []string {
+	value := override
+
+	if value == "" {
+		_ = godotenv.Load()
+
+		value = os.Getenv("KAFKA_BROKERS")
+	}
+
+	if value == "" {
+		value = "localhost:9092"
+	}
+
+	parts := strings.Split(value, ",")
+
+	brokers := make([]string, 0, len(parts))
+
+	for _, part := range parts {
+		if part = strings.TrimSpace(part); part != "" {
+			brokers = append(brokers, part)
+		}
+	}
+
+	return brokers
+}
+
+func resolveKafkaTopic(override string) string {
+	if override != "" {
+		return override
+	}
+
+	_ = godotenv.Load()
+
+	if v := os.Getenv("KAFKA_TOPIC"); v != "" {
+		return v
+	}
+
+	return "eventflow.events"
 }
 
 func resolveDatabaseURL(override string) string {
@@ -205,21 +285,30 @@ func resolveDatabaseURL(override string) string {
 // Publisher
 // ========================================
 
-// benchPublisher is deliberately cheap so the measurement reflects the
-// claim/mark pipeline. It also records every call, which is how the run
-// detects an event published twice.
+// benchPublisher records every successful delivery, which is how the run
+// detects an event published twice, and times each one. With no next
+// publisher it is deliberately cheap so the measurement reflects the
+// claim/mark pipeline; with a next publisher (Kafka) a delivery only
+// counts once that publisher returned nil, i.e. the broker acknowledged.
 type benchPublisher struct {
 	latency time.Duration
+	next    application.EventPublisher
 
-	mu    sync.Mutex
-	calls map[uuid.UUID]int
-	total int
-	first time.Time
+	mu          sync.Mutex
+	calls       map[uuid.UUID]int
+	total       int
+	first       time.Time
+	durationSum time.Duration
+	durationMax time.Duration
 }
 
-func newBenchPublisher(latency time.Duration) *benchPublisher {
+func newBenchPublisher(
+	latency time.Duration,
+	next application.EventPublisher,
+) *benchPublisher {
 	return &benchPublisher{
 		latency: latency,
+		next:    next,
 		calls:   make(map[uuid.UUID]int),
 	}
 }
@@ -227,19 +316,8 @@ func newBenchPublisher(latency time.Duration) *benchPublisher {
 func (p *benchPublisher) Publish(
 	ctx context.Context,
 	event domain.OutboxEvent,
-	_ *slog.Logger,
+	logger *slog.Logger,
 ) error {
-	p.mu.Lock()
-
-	p.calls[event.ID]++
-	p.total++
-
-	if p.first.IsZero() {
-		p.first = time.Now()
-	}
-
-	p.mu.Unlock()
-
 	if p.latency > 0 {
 		select {
 		case <-time.After(p.latency):
@@ -248,20 +326,65 @@ func (p *benchPublisher) Publish(
 		}
 	}
 
-	return nil
-}
+	start := time.Now()
 
-func (p *benchPublisher) stats() (distinct, duplicates, total int, first time.Time) {
-	p.mu.Lock()
-	defer p.mu.Unlock()
-
-	for _, n := range p.calls {
-		if n > 1 {
-			duplicates++
+	if p.next != nil {
+		if err := p.next.Publish(ctx, event, logger); err != nil {
+			return err
 		}
 	}
 
-	return len(p.calls), duplicates, p.total, p.first
+	elapsed := time.Since(start)
+
+	p.mu.Lock()
+	defer p.mu.Unlock()
+
+	p.calls[event.ID]++
+	p.total++
+	p.durationSum += elapsed
+
+	if elapsed > p.durationMax {
+		p.durationMax = elapsed
+	}
+
+	if p.first.IsZero() {
+		p.first = time.Now()
+	}
+
+	return nil
+}
+
+type publishStats struct {
+	distinct    int
+	duplicates  int
+	total       int
+	first       time.Time
+	durationAvg time.Duration
+	durationMax time.Duration
+}
+
+func (p *benchPublisher) stats() publishStats {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+
+	s := publishStats{
+		distinct:    len(p.calls),
+		total:       p.total,
+		first:       p.first,
+		durationMax: p.durationMax,
+	}
+
+	for _, n := range p.calls {
+		if n > 1 {
+			s.duplicates++
+		}
+	}
+
+	if p.total > 0 {
+		s.durationAvg = p.durationSum / time.Duration(p.total)
+	}
+
+	return s
 }
 
 // ========================================
@@ -323,12 +446,57 @@ func run(cfg runConfig) error {
 		return err
 	}
 
-	benchPub := newBenchPublisher(cfg.publishLatency)
+	// Publisher chain, outermost first:
+	//   FailingPublisher (optional) -> benchPublisher -> Kafka (optional)
+	// so a failed attempt never reaches the counters: only deliveries the
+	// terminal publisher acknowledged are counted.
+	var terminal application.EventPublisher
 
-	// The workers see one EventPublisher. With failure injection enabled
-	// it is the production FailingPublisher wrapping the counting
-	// publisher, so a failed attempt never reaches the counters: only
-	// deliveries are counted, exactly like a real broker.
+	var kafkaPublisher *kafkaplatform.Publisher
+
+	if cfg.publisher == publisherKafka {
+		if err := kafkaplatform.EnsureTopic(
+			setupCtx,
+			cfg.kafkaBrokers,
+			cfg.kafkaTopic,
+			3,
+			10*time.Second,
+		); err != nil {
+			return fmt.Errorf("ensure kafka topic: %w", err)
+		}
+
+		if err := kafkaplatform.WaitTopicReady(
+			setupCtx,
+			cfg.kafkaBrokers,
+			cfg.kafkaTopic,
+			10*time.Second,
+		); err != nil {
+			return fmt.Errorf("kafka topic not ready: %w", err)
+		}
+
+		kafkaPublisher = kafkaplatform.NewPublisher(
+			config.KafkaConfig{
+				Brokers:      cfg.kafkaBrokers,
+				Topic:        cfg.kafkaTopic,
+				ClientID:     "outboxbench",
+				WriteTimeout: 10 * time.Second,
+				MaxAttempts:  3,
+				BatchTimeout: 10 * time.Millisecond,
+			},
+			metrics.NewKafkaMetrics(prometheus.NewRegistry()),
+		)
+
+		terminal = kafkaPublisher
+
+		log.Printf(
+			"publishing to kafka brokers=%v topic=%s",
+			cfg.kafkaBrokers,
+			cfg.kafkaTopic,
+		)
+	}
+
+	benchPub := newBenchPublisher(cfg.publishLatency, terminal)
+
 	var publisher application.EventPublisher = benchPub
 
 	var injector *application.FailingPublisher
@@ -404,6 +572,12 @@ func run(cfg runConfig) error {
 	for err := range errs {
 		if err != nil {
 			log.Printf("worker stopped with error: %v", err)
+		}
+	}
+
+	if kafkaPublisher != nil {
+		if err := kafkaPublisher.Close(); err != nil {
+			log.Printf("kafka publisher close: %v", err)
 		}
 	}
 
@@ -614,6 +788,8 @@ type result struct {
 	distinct           int
 	publishAttempts    int
 	injectedFailures   int
+	publishDurationAvg time.Duration
+	publishDurationMax time.Duration
 }
 
 func buildResult(
@@ -624,7 +800,12 @@ func buildResult(
 	duration time.Duration,
 	start time.Time,
 ) result {
-	distinct, duplicates, total, first := publisher.stats()
+	stats := publisher.stats()
+
+	distinct := stats.distinct
+	duplicates := stats.duplicates
+	total := stats.total
+	first := stats.first
 
 	// Without injection every attempt reaches the counting publisher.
 	publishAttempts := total
@@ -660,6 +841,8 @@ func buildResult(
 		distinct:           distinct,
 		publishAttempts:    publishAttempts,
 		injectedFailures:   injectedFailures,
+		publishDurationAvg: stats.durationAvg,
+		publishDurationMax: stats.durationMax,
 	}
 }
 
@@ -679,6 +862,7 @@ outbox worker benchmark
 workers               %d
 batch_size            %d
 interval              %s
+publisher             %s
 publish_latency       %s
 failure_rate          %.2f
 poison_events         %d
@@ -689,6 +873,8 @@ total_events          %d
 duration              %s
 time_to_first_publish %s
 throughput            %.1f events/sec
+publish_duration_avg  %s
+publish_duration_max  %s
 ----------------------------------------
 published             %d
 failed (CLOSE)        %d
@@ -708,6 +894,7 @@ publish_calls         %d (distinct %d)
 		r.cfg.workers,
 		r.cfg.batchSize,
 		r.cfg.interval,
+		r.publisherLabel(),
 		r.cfg.publishLatency,
 		r.cfg.failureRate,
 		r.cfg.poisonEvents,
@@ -717,6 +904,8 @@ publish_calls         %d (distinct %d)
 		r.duration.Round(time.Millisecond),
 		r.timeToFirstPublish.Round(time.Millisecond),
 		r.throughput(),
+		r.publishDurationAvg.Round(time.Microsecond),
+		r.publishDurationMax.Round(time.Microsecond),
 		r.published,
 		r.failed,
 		r.pending,
@@ -732,17 +921,27 @@ publish_calls         %d (distinct %d)
 	)
 }
 
-const markdownHeader = "| Workers | Batch | Events | Duration | Throughput | Published | Failed | Pending | Processing | Duplicate | Lost |\n" +
-	"|---------|-------|--------|----------|------------|-----------|--------|---------|------------|-----------|------|"
+func (r result) publisherLabel() string {
+	if r.cfg.publisher == publisherKafka {
+		return "kafka (" + r.cfg.kafkaTopic + ")"
+	}
+
+	return publisherInMemory
+}
+
+const markdownHeader = "| Publisher | Workers | Batch | Events | Duration | Throughput | Publish avg | Published | Failed | Pending | Processing | Duplicate | Lost |\n" +
+	"|-----------|---------|-------|--------|----------|------------|-------------|-----------|--------|---------|------------|-----------|------|"
 
 func (r result) markdownRow() string {
 	return fmt.Sprintf(
-		"| %d | %d | %d | %s | %.1f/s | %d | %d | %d | %d | %d | %d |",
+		"| %s | %d | %d | %d | %s | %.1f/s | %s | %d | %d | %d | %d | %d | %d |",
+		r.cfg.publisher,
 		r.cfg.workers,
 		r.cfg.batchSize,
 		r.cfg.totalEvents,
 		r.duration.Round(time.Millisecond),
 		r.throughput(),
+		r.publishDurationAvg.Round(time.Microsecond),
 		r.published,
 		r.failed,
 		r.pending,
