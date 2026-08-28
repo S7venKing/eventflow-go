@@ -127,7 +127,110 @@ SELECT COUNT(*) FROM outbox_events
 WHERE status = 'CLOSE' AND attempts <> 3;    -- phải = 0
 ```
 
-## 6. Env liên quan
+## 6. Kafka (Outbox → Kafka)
+
+### 6.1 Bật stack
+
+```bash
+docker compose config            # kiểm tra cú pháp compose
+docker compose up -d             # postgres, kafka, kafka-init, api, pgadmin, prometheus
+docker compose ps                # kafka phải "healthy", kafka-init phải "exited (0)"
+docker compose logs kafka-init   # thấy topic eventflow.events được create/describe
+```
+
+Địa chỉ broker:
+
+- trong Docker (API container): `kafka:9092` — compose tự set
+- từ host (tests, `outboxbench`, binary chạy tay): `localhost:9092` (`.env`)
+
+Xem message thật trên topic:
+
+```bash
+docker compose exec kafka /opt/kafka/bin/kafka-console-consumer.sh \
+  --bootstrap-server kafka:9092 --topic eventflow.events \
+  --from-beginning --property print.key=true --property print.headers=true
+```
+
+### 6.2 Unit test (không cần broker)
+
+```bash
+go test ./internal/platform/kafka/ -run 'TestPublish|TestClose' -v
+go test ./internal/config/ -run 'Kafka|Publisher' -v
+```
+
+`TestPublish*` dùng writer giả: key = event_id, value = payload nguyên
+bản, headers, metrics, error được wrap, context cancel không tính là
+failure, payload rỗng/không phải JSON bị từ chối trước khi ghi.
+
+### 6.3 Integration test (cần Postgres + Kafka đang chạy)
+
+| Test | Chứng minh |
+|------|-----------|
+| `TestPublisherDeliversEventToKafka` (`internal/platform/kafka`) | Publish 1 event → đọc lại từ topic → verify key, header, và toàn bộ field JSON (`event_id, type, version, source, user_id, anonymous_id, session_id, timestamp, properties`) |
+| `TestOutboxWorkersPublishEveryEventToKafkaOnce` (`internal/event/application`) | 100 PENDING → 4 workers → 100 PUBLISHED, đọc đúng 100 message, mỗi `event_id` đúng 1 lần, không có message thừa |
+| `TestOutboxWorkerKafkaOutageKeepsEventsPendingUntilRecovery` | **Kafka outage**: writer giả "down" → mọi event fail → `attempts ≥ 1`, `last_error` chứa "kafka", **PUBLISHED = 0**; bật lại → cùng workers drain hết → PUBLISHED = 20, Kafka nhận đúng 20 lần (chỉ cần Postgres) |
+
+```bash
+go test ./internal/platform/kafka/ -run TestPublisherDeliversEventToKafka -v
+go test ./internal/event/application/ -run 'Kafka' -v
+```
+
+Test tự tạo topic tạm `eventflow.test.*` / `eventflow.outbox-test.*` (1
+partition) và xóa sau khi xong. Không có broker thì skip.
+
+### 6.4 Failure drill với broker thật (thủ công)
+
+Chứng minh outbox bảo vệ pipeline khi Kafka chết thật:
+
+```bash
+# 1. Postgres + Kafka lên, API tắt (để không tranh event với bench)
+docker compose up -d postgres kafka kafka-init
+docker compose stop api
+
+# 2. Tắt Kafka
+docker compose stop kafka
+
+# 3. Chạy bench qua Kafka, bench sẽ chờ tới 3 phút cho outbox drain
+go run ./cmd/outboxbench -publisher kafka -workers 2 -batch 10 -events 50 -timeout 3m
+#    -> log "kafka_publish_failed", published = 0, pending/processing = 50,
+#       attempts tăng theo backoff. Không có event nào PUBLISHED.
+
+# 4. Trong lúc bench vẫn đang chạy (terminal khác): bật lại Kafka
+docker compose start kafka
+
+# 5. Bench tự drain: published = 50, pending = 0, processing = 0, lost = 0
+```
+
+Nếu lỡ để bench timeout trước khi bật Kafka: chạy lại bước 3 sau khi Kafka
+lên, các event PENDING còn lại sẽ được publish (bench truncate + seed lại,
+nên số liệu là của lần chạy mới).
+
+### 6.5 Benchmark BEFORE / AFTER
+
+Cùng workload: 1000 events, batch 10, interval 50ms, workers 1/2/4/8.
+
+```powershell
+docker compose up -d postgres kafka kafka-init
+./benchmark/run_worker_bench.ps1 -Publisher inmemory   # BEFORE
+./benchmark/run_worker_bench.ps1 -Publisher kafka      # AFTER
+```
+
+Kết quả vào `benchmark/results-worker-concurrency-<publisher>.md`. Bench
+in thêm `publish_duration_avg/max` (thời gian tới khi Kafka ack) và
+`kafka_publish_*` metrics được expose ở API `/metrics` khi chạy qua API.
+
+### 6.6 At-least-once — duplicate window (chủ đích, không sửa ở step này)
+
+```
+Kafka ack  →  crash trước MarkPublished  →  PROCESSING stale  →  reclaim
+           →  publish lại  →  Kafka có 2 message cùng key/payload
+```
+
+Đây là hành vi đúng của at-least-once. Consumer ở Step 13 phải idempotent
+theo `event_id`. Test crash/reclaim ở mục 2 (`TestOutboxWorkerCrashIsRecoveredByReclaim`)
+chính là đường đi này, chỉ khác là publisher giả.
+
+## 7. Env liên quan
 
 | Env | Default | Ý nghĩa |
 |-----|---------|---------|
@@ -136,4 +239,11 @@ WHERE status = 'CLOSE' AND attempts <> 3;    -- phải = 0
 | `OUTBOX_INTERVAL` | 5s | Chu kỳ poll của mỗi worker |
 | `OUTBOX_STALE_TIMEOUT` | 5m | Row PROCESSING già hơn mức này bị reclaim về PENDING. Phải lớn hơn hẳn `SHUTDOWN_TIMEOUT` + publish chậm nhất, nếu không sẽ double-publish |
 | `PUBLISH_FAILURE_RATE` | 0 | Xác suất inject fail mỗi publish attempt, `[0, 1)`. Chỉ dùng khi drill |
+| `OUTBOX_PUBLISHER` | kafka | `kafka` = publish qua broker; `log` = chỉ log ra stdout (chạy không cần Kafka) |
+| `KAFKA_BROKERS` | localhost:9092 | Danh sách broker, phân cách bằng dấu phẩy. Trong compose API dùng `kafka:9092` |
+| `KAFKA_TOPIC` | eventflow.events | Topic outbox worker publish vào; `kafka-init` tạo sẵn |
+| `KAFKA_CLIENT_ID` | eventflow-api | Client id của producer |
+| `KAFKA_WRITE_TIMEOUT` | 10s | Deadline mỗi lần produce (dial + write + ack); quá hạn = publish fail → retry |
+| `KAFKA_MAX_ATTEMPTS` | 3 | Producer tự retry bấy nhiêu lần trước khi báo fail cho outbox worker |
+| `KAFKA_BATCH_TIMEOUT` | 10ms | Thời gian producer gom batch; giữ nhỏ vì mỗi worker publish đồng bộ |
 | `SHUTDOWN_TIMEOUT` | 30s | Thời gian drain khi shutdown |

@@ -64,6 +64,127 @@
 
 ---
 
+## Outbox → Kafka Pipeline
+
+Ingestion never talks to Kafka. The API commits the event and an outbox
+row in one PostgreSQL transaction; a background worker publishes the
+outbox rows to Kafka afterwards. The database is the source of truth for
+"was this event ingested"; Kafka is how it fans out.
+
+```
+Client
+   │  POST /api/v1/events
+   ▼
+Ingestion API
+   │  one transaction
+   ▼
+PostgreSQL ──┬── events            (source of truth)
+             └── outbox_events     (PENDING)
+                      │
+                      ▼
+               Outbox Worker ×N     ClaimPending (FOR UPDATE SKIP LOCKED)
+                      │             PENDING → PROCESSING
+                      ▼
+             EventPublisher iface   internal/event/application
+                      │
+                      ▼
+              KafkaPublisher        internal/platform/kafka
+                      │             sync produce, acks=all
+                      ▼
+          Kafka topic eventflow.events
+                      │
+                      ▼  (Step 13)
+              Analytics Consumer
+```
+
+### Why the outbox exists
+
+Writing to the database and to Kafka are two systems; no transaction
+spans both. If the API published directly, a crash between the two
+writes would either lose the event (DB ok, Kafka missed) or emit a
+phantom (Kafka ok, DB rolled back). The outbox row is written **in the
+same transaction** as the event, so "ingested" and "will be published"
+become one atomic fact. The worker then moves each row through
+
+```
+PENDING → PROCESSING → PUBLISHED
+             │
+             ├─ publish failed → PENDING (attempts+1, backoff)  → retry
+             ├─ retry budget exhausted → CLOSE
+             └─ worker crashed → stale PROCESSING → ReclaimStale → PENDING
+```
+
+and only marks `PUBLISHED` after Kafka has acknowledged the write.
+
+### Why Kafka exists
+
+One ingested event will feed several independent readers. Kafka
+decouples them from the API and from each other: each consumer group
+reads the same topic at its own pace, can be added later, and can replay.
+
+```
+eventflow.events
+   ├── Analytics Consumer        (Step 13)
+   ├── Notification Consumer     (future)
+   └── Data Warehouse Consumer   (future)
+```
+
+None of these consumers exist yet; the pipeline currently ends at the
+topic.
+
+### Message contract
+
+| Part | Value |
+|------|-------|
+| Topic | `eventflow.events` (`KAFKA_TOPIC`) |
+| Key | `event_id` — identifies the event and keeps redeliveries of one event on one partition. `user_id` would be the key if per-user ordering is ever required; not needed yet. |
+| Value | The JSON the ingestion transaction wrote to `outbox_events.payload`, verbatim: `event_id, type, version, source, user_id, anonymous_id, session_id, timestamp, properties` |
+| Headers | `event_id`, `event_type`, `content_type=application/json` |
+
+### Delivery semantics: at-least-once
+
+The pipeline guarantees every ingested event reaches Kafka **at least
+once**. It does not guarantee exactly once, and does not try to:
+
+```
+Kafka acknowledges the write
+        │
+        ▼
+process crashes before MarkPublished
+        │
+        ▼
+row stays PROCESSING → ReclaimStale → PENDING
+        │
+        ▼
+another worker publishes the same event again
+        │
+        ▼
+Kafka now holds the message twice (same key, same payload)
+```
+
+The same window exists when the publish succeeds but `MarkPublished`
+itself fails. Consumers must therefore be idempotent on `event_id`;
+that is the first job of the analytics consumer in Step 13.
+
+### Producer configuration
+
+| Setting | Value | Why |
+|---------|-------|-----|
+| `RequiredAcks` | all (`-1`) | `PUBLISHED` must mean the message survives a broker restart |
+| `Async` | false | the worker needs the ack before it can mark the row |
+| `Balancer` | hash on key | same `event_id` → same partition |
+| `MaxAttempts` | `KAFKA_MAX_ATTEMPTS` (3) | producer-side retry before the outbox's own retry/backoff takes over |
+| `WriteTimeout` | `KAFKA_WRITE_TIMEOUT` (10s) | a stuck broker becomes a publish failure, not a stuck worker |
+| `BatchTimeout` | `KAFKA_BATCH_TIMEOUT` (10ms) | kafka-go's 1s default would stall every synchronous single-message write |
+| `AllowAutoTopicCreation` | false | topics are created by `kafka-init`, never by a produce |
+
+Kafka runs as a single KRaft node in docker compose with two listeners:
+`kafka:9092` for containers on `eventflow-net`, `localhost:9092` for the
+host (mapped from the container's 9094). `OUTBOX_PUBLISHER=log` swaps
+the Kafka publisher for a stdout one when running without a broker.
+
+---
+
 ## Directory Structure
 
 ```
@@ -509,10 +630,15 @@ curl -X POST http://localhost:8080/v1/events \
 - Error handling and responses
 - API documentation (OpenAPI/Postman)
 - Testing files and guides
+- PostgreSQL persistence with transactional outbox
+- Outbox worker: configurable concurrency, retry with exponential backoff + jitter, stale-PROCESSING reclaim, graceful shutdown
+- Kafka producer behind the `EventPublisher` interface (topic `eventflow.events`, at-least-once)
+- Prometheus metrics for outbox and Kafka publishing
+- Failure injection (`PUBLISH_FAILURE_RATE`) and recovery tests
+- k6 API benchmark and outbox worker benchmark (`cmd/outboxbench`)
 
 ### 🚀 Future Enhancements
-- Database persistence (MongoDB)
-- Event streaming/queuing (Kafka, RabbitMQ)
+- Kafka consumers: analytics (Step 13, idempotent on `event_id`), notifications, data warehouse
 - Advanced validation (regex, range constraints)
 - Event transformation and enrichment
 - Rate limiting and authentication
@@ -530,8 +656,8 @@ curl -X POST http://localhost:8080/v1/events \
 - **Supported Event Types:** 3 (page_view, purchase, search)
 - **API Endpoints:** 2 (health check, event ingestion)
 - **Layer Architecture:** 4 layers (Transport, Application, Domain, Validation)
-- **Database:** None (in-memory currently)
-- **Message Queue:** None (synchronous processing currently)
+- **Database:** PostgreSQL 17 (`events` + `outbox_events`)
+- **Message Queue:** Kafka (KRaft, single node in docker compose), topic `eventflow.events`, published by the outbox worker with at-least-once semantics
 
 ---
 
