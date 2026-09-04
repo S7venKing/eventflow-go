@@ -344,6 +344,19 @@ func seedPendingOutboxEvents(
 ) {
 	t.Helper()
 
+	seedTypedPendingOutboxEvents(t, db, count, "test.event")
+}
+
+// seedTypedPendingOutboxEvents is seedPendingOutboxEvents with an explicit
+// event type, so failure tests can mark a subset of events poison.
+func seedTypedPendingOutboxEvents(
+	t *testing.T,
+	db *postgres.DB,
+	count int,
+	eventType string,
+) {
+	t.Helper()
+
 	const query = `
 		WITH seeded_events AS (
 			INSERT INTO events (
@@ -352,7 +365,7 @@ func seedPendingOutboxEvents(
 			SELECT
 				gen_random_uuid(),
 				gen_random_uuid(),
-				'test.event',
+				$2,
 				1,
 				'concurrency-test',
 				NOW(),
@@ -367,7 +380,7 @@ func seedPendingOutboxEvents(
 		SELECT
 			gen_random_uuid(),
 			event_id,
-			'test.event',
+			$2,
 			'{}',
 			'PENDING',
 			0,
@@ -380,8 +393,14 @@ func seedPendingOutboxEvents(
 		context.Background(),
 		query,
 		count,
+		eventType,
 	); err != nil {
-		t.Fatalf("seed %d pending events: %v", count, err)
+		t.Fatalf(
+			"seed %d pending %s events: %v",
+			count,
+			eventType,
+			err,
+		)
 	}
 }
 
@@ -428,6 +447,36 @@ func countOutboxByStatus(
 	return counts
 }
 
+// workerFixture describes one fleet of workers for a test. Zero values
+// fall back to the defaults main.go uses, except staleTimeout, which
+// stays 0 (reclaim disabled) unless a test opts in.
+type workerFixture struct {
+	workers         int
+	batchSize       int
+	interval        time.Duration
+	maxRetries      int
+	retryBaseDelay  time.Duration
+	retryMaxDelay   time.Duration
+	shutdownTimeout time.Duration
+	staleTimeout    time.Duration
+}
+
+func (f workerFixture) withDefaults() workerFixture {
+	if f.maxRetries == 0 {
+		f.maxRetries = 3
+	}
+
+	if f.retryBaseDelay == 0 {
+		f.retryBaseDelay = time.Second
+	}
+
+	if f.retryMaxDelay == 0 {
+		f.retryMaxDelay = 30 * time.Second
+	}
+
+	return f
+}
+
 // startOutboxWorkers launches count workers sharing one repository, one
 // pool, one publisher and one metrics set, exactly as main.go wires them.
 func startOutboxWorkers(
@@ -439,6 +488,27 @@ func startOutboxWorkers(
 	interval time.Duration,
 	shutdownTimeout time.Duration,
 ) (*sync.WaitGroup, chan error) {
+	return startOutboxWorkersCfg(
+		ctx,
+		repository,
+		publisher,
+		workerFixture{
+			workers:         count,
+			batchSize:       batchSize,
+			interval:        interval,
+			shutdownTimeout: shutdownTimeout,
+		},
+	)
+}
+
+func startOutboxWorkersCfg(
+	ctx context.Context,
+	repository *postgres.OutboxRepository,
+	publisher EventPublisher,
+	fixture workerFixture,
+) (*sync.WaitGroup, chan error) {
+	fixture = fixture.withDefaults()
+
 	outboxMetrics := metrics.NewOutboxMetrics(
 		prometheus.NewRegistry(),
 	)
@@ -447,18 +517,19 @@ func startOutboxWorkers(
 
 	var group sync.WaitGroup
 
-	errs := make(chan error, count)
+	errs := make(chan error, fixture.workers)
 
-	for i := 1; i <= count; i++ {
+	for i := 1; i <= fixture.workers; i++ {
 		worker := NewOutboxWorker(
 			repository,
 			publisher,
-			interval,
-			batchSize,
-			3,
-			time.Second,
-			30*time.Second,
-			shutdownTimeout,
+			fixture.interval,
+			fixture.batchSize,
+			fixture.maxRetries,
+			fixture.retryBaseDelay,
+			fixture.retryMaxDelay,
+			fixture.shutdownTimeout,
+			fixture.staleTimeout,
 			outboxMetrics,
 			logger.With("worker_id", i),
 		)

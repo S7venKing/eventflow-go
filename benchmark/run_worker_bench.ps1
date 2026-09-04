@@ -15,6 +15,11 @@
 .EXAMPLE
     # Model a broker that takes 5ms per publish.
     ./benchmark/run_worker_bench.ps1 -PublishLatency 5ms
+
+.EXAMPLE
+    # Publish through the real Kafka broker from docker compose.
+    docker compose up -d postgres kafka kafka-init
+    ./benchmark/run_worker_bench.ps1 -Publisher kafka
 #>
 
 [CmdletBinding()]
@@ -24,9 +29,19 @@ param(
     [int]$Events = 1000,
     [string]$Interval = "50ms",
     [string]$PublishLatency = "0s",
-    [string]$Out = "benchmark/results-worker-concurrency.md",
+    # inmemory = count-only publisher (the BEFORE baseline),
+    # kafka    = real broker via internal/platform/kafka (the AFTER run).
+    [ValidateSet("inmemory", "kafka")]
+    [string]$Publisher = "inmemory",
+    [string]$KafkaBrokers = "",
+    [string]$KafkaTopic = "",
+    [string]$Out = "",
     [string]$DatabaseUrl = ""
 )
+
+if ($Out -eq "") {
+    $Out = "benchmark/results-worker-concurrency-$Publisher.md"
+}
 
 $ErrorActionPreference = "Stop"
 
@@ -41,7 +56,7 @@ if (Test-Path $Out) {
 foreach ($workers in $WorkerLevels) {
     Write-Host ""
     Write-Host "========================================" -ForegroundColor Cyan
-    Write-Host " workers=$workers batch=$BatchSize events=$Events" -ForegroundColor Cyan
+    Write-Host " workers=$workers batch=$BatchSize events=$Events publisher=$Publisher" -ForegroundColor Cyan
     Write-Host "========================================" -ForegroundColor Cyan
 
     $benchArgs = @(
@@ -51,11 +66,20 @@ foreach ($workers in $WorkerLevels) {
         "-events", $Events,
         "-interval", $Interval,
         "-publish-latency", $PublishLatency,
+        "-publisher", $Publisher,
         "-out", $Out
     )
 
     if ($DatabaseUrl -ne "") {
         $benchArgs += @("-database-url", $DatabaseUrl)
+    }
+
+    if ($KafkaBrokers -ne "") {
+        $benchArgs += @("-kafka-brokers", $KafkaBrokers)
+    }
+
+    if ($KafkaTopic -ne "") {
+        $benchArgs += @("-kafka-topic", $KafkaTopic)
     }
 
     & go @benchArgs

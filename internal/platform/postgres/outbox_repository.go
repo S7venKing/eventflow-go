@@ -117,7 +117,9 @@ func (r *OutboxRepository) ClaimPending(
 		ctx,
 		`
 		UPDATE outbox_events
-		SET status = 'PROCESSING'
+		SET
+			status = 'PROCESSING',
+			processing_at = NOW()
 		WHERE id = ANY($1)
 		`,
 		ids,
@@ -141,6 +143,58 @@ func (r *OutboxRepository) ClaimPending(
 	}
 
 	return events, nil
+}
+
+// ReclaimStale returns to PENDING every event that has sat in PROCESSING
+// longer than staleAfter, measured against the processing_at timestamp
+// that ClaimPending stamps. A crashed worker leaves its claimed batch in
+// PROCESSING with no cleanup; this is the only path that frees those rows.
+//
+// Rows in PROCESSING with a NULL processing_at were claimed by a build
+// that predates the timestamp and can only be leftovers, so they are
+// reclaimed unconditionally.
+//
+// The comparison happens entirely on the database clock and the rows are
+// taken FOR UPDATE SKIP LOCKED inside a single statement, so any number
+// of workers may call this concurrently: each stale row is reclaimed by
+// exactly one of them.
+func (r *OutboxRepository) ReclaimStale(
+	ctx context.Context,
+	staleAfter time.Duration,
+) (int, error) {
+	const query = `
+		WITH stale AS (
+			SELECT id
+			FROM outbox_events
+			WHERE status = 'PROCESSING'
+			  AND (
+				processing_at IS NULL
+				OR processing_at <= NOW() - make_interval(secs => $1)
+			  )
+			FOR UPDATE SKIP LOCKED
+		)
+		UPDATE outbox_events AS o
+		SET
+			status = 'PENDING',
+			available_at = NOW(),
+			processing_at = NULL
+		FROM stale
+		WHERE o.id = stale.id
+	`
+
+	tag, err := r.db.Pool.Exec(
+		ctx,
+		query,
+		staleAfter.Seconds(),
+	)
+	if err != nil {
+		return 0, fmt.Errorf(
+			"reclaim stale outbox events: %w",
+			err,
+		)
+	}
+
+	return int(tag.RowsAffected()), nil
 }
 
 func (r *OutboxRepository) MarkPublished(

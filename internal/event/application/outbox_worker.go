@@ -58,6 +58,7 @@ type OutboxWorker struct {
 	retryBaseDelay  time.Duration
 	retryMaxDelay   time.Duration
 	shutdownTimeout time.Duration
+	staleTimeout    time.Duration
 	state           atomic.Int32
 	metrics         *metrics.OutboxMetrics
 	logger          *slog.Logger
@@ -80,6 +81,7 @@ func NewOutboxWorker(
 	retryBaseDelay time.Duration,
 	retryMaxDelay time.Duration,
 	shutdownTimeout time.Duration,
+	staleTimeout time.Duration,
 	metrics *metrics.OutboxMetrics,
 	logger *slog.Logger,
 ) *OutboxWorker {
@@ -92,6 +94,7 @@ func NewOutboxWorker(
 		retryBaseDelay:  retryBaseDelay,
 		retryMaxDelay:   retryMaxDelay,
 		shutdownTimeout: shutdownTimeout,
+		staleTimeout:    staleTimeout,
 		metrics:         metrics,
 		logger:          logger,
 	}
@@ -207,7 +210,42 @@ func (w *OutboxWorker) Run(ctx context.Context) error {
 	}
 }
 
+// reclaimStale frees events stuck in PROCESSING by a crashed worker.
+// A reclaim failure is logged but never blocks claiming: the stale rows
+// stay put and the next tick tries again.
+func (w *OutboxWorker) reclaimStale(ctx context.Context) {
+	if w.staleTimeout <= 0 {
+		return
+	}
+
+	reclaimed, err := w.repository.ReclaimStale(
+		ctx,
+		w.staleTimeout,
+	)
+	if err != nil {
+		w.logger.Error(
+			"reclaim_stale_failed",
+			"error",
+			err,
+		)
+
+		return
+	}
+
+	if reclaimed > 0 {
+		w.logger.Info(
+			"stale_events_reclaimed",
+			"count",
+			reclaimed,
+			"stale_timeout",
+			w.staleTimeout,
+		)
+	}
+}
+
 func (w *OutboxWorker) process(ctx context.Context) error {
+	w.reclaimStale(ctx)
+
 	events, err := w.repository.ClaimPending(
 		ctx,
 		w.batchSize,

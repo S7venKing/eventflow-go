@@ -4,13 +4,84 @@ import (
 	"fmt"
 	"os"
 	"strconv"
+	"strings"
 	"time"
 )
 
 type Config struct {
 	Database        DatabaseConfig
 	Outbox          OutboxConfig
+	Kafka           KafkaConfig
 	ShutdownTimeout time.Duration
+}
+
+// KafkaConfig describes the producer the outbox worker publishes through.
+// Brokers differ by where the process runs: inside docker compose the API
+// reaches the broker as kafka:9092, from the host as localhost:9092.
+type KafkaConfig struct {
+	Brokers      []string
+	Topic        string
+	ClientID     string
+	WriteTimeout time.Duration
+	MaxAttempts  int
+	BatchTimeout time.Duration
+}
+
+const (
+	defaultKafkaBrokers      = "localhost:9092"
+	defaultKafkaTopic        = "eventflow.events"
+	defaultKafkaClientID     = "eventflow-api"
+	defaultKafkaWriteTimeout = 10 * time.Second
+	defaultKafkaMaxAttempts  = 3
+	defaultKafkaBatchTimeout = 10 * time.Millisecond
+)
+
+func (c KafkaConfig) Validate() error {
+	if len(c.Brokers) == 0 {
+		return fmt.Errorf(
+			"KAFKA_BROKERS is required",
+		)
+	}
+
+	for _, broker := range c.Brokers {
+		if broker == "" {
+			return fmt.Errorf(
+				"KAFKA_BROKERS contains an empty broker address",
+			)
+		}
+	}
+
+	if c.Topic == "" {
+		return fmt.Errorf(
+			"KAFKA_TOPIC is required",
+		)
+	}
+
+	if c.ClientID == "" {
+		return fmt.Errorf(
+			"KAFKA_CLIENT_ID is required",
+		)
+	}
+
+	if c.WriteTimeout <= 0 {
+		return fmt.Errorf(
+			"KAFKA_WRITE_TIMEOUT must be greater than 0",
+		)
+	}
+
+	if c.MaxAttempts <= 0 {
+		return fmt.Errorf(
+			"KAFKA_MAX_ATTEMPTS must be greater than 0",
+		)
+	}
+
+	if c.BatchTimeout <= 0 {
+		return fmt.Errorf(
+			"KAFKA_BATCH_TIMEOUT must be greater than 0",
+		)
+	}
+
+	return nil
 }
 
 type DatabaseConfig struct {
@@ -29,15 +100,46 @@ type OutboxConfig struct {
 	Workers   int
 	BatchSize int
 	Interval  time.Duration
+
+	// Publisher selects what the workers publish through: "kafka" (the
+	// pipeline) or "log" (stdout only, for running the API without a
+	// broker).
+	Publisher string
+
+	// StaleTimeout is how long an event may sit in PROCESSING before a
+	// worker reclaims it back to PENDING. It must comfortably exceed the
+	// longest legitimate publish (including the shutdown drain window),
+	// or a slow worker's events get reclaimed and published twice.
+	StaleTimeout time.Duration
+
+	// PublishFailureRate injects transient publish failures at this
+	// per-attempt probability. 0 disables injection; anything above it
+	// is a chaos knob for exercising retry and recovery, never a
+	// production setting.
+	PublishFailureRate float64
 }
 
 const (
-	defaultOutboxWorkers   = 1
-	defaultOutboxBatchSize = 100
-	defaultOutboxInterval  = 5 * time.Second
+	defaultOutboxWorkers      = 1
+	defaultOutboxBatchSize    = 100
+	defaultOutboxInterval     = 5 * time.Second
+	defaultOutboxStaleTimeout = 5 * time.Minute
+	defaultOutboxPublisher    = OutboxPublisherKafka
+
+	OutboxPublisherKafka = "kafka"
+	OutboxPublisherLog   = "log"
 )
 
 func (c OutboxConfig) Validate() error {
+	if c.Publisher != OutboxPublisherKafka &&
+		c.Publisher != OutboxPublisherLog {
+		return fmt.Errorf(
+			"OUTBOX_PUBLISHER must be %q or %q",
+			OutboxPublisherKafka,
+			OutboxPublisherLog,
+		)
+	}
+
 	if c.Workers <= 0 {
 		return fmt.Errorf(
 			"OUTBOX_WORKERS must be greater than 0",
@@ -53,6 +155,18 @@ func (c OutboxConfig) Validate() error {
 	if c.Interval <= 0 {
 		return fmt.Errorf(
 			"OUTBOX_INTERVAL must be greater than 0",
+		)
+	}
+
+	if c.StaleTimeout <= 0 {
+		return fmt.Errorf(
+			"OUTBOX_STALE_TIMEOUT must be greater than 0",
+		)
+	}
+
+	if c.PublishFailureRate < 0 || c.PublishFailureRate >= 1 {
+		return fmt.Errorf(
+			"PUBLISH_FAILURE_RATE must be in [0, 1)",
 		)
 	}
 
@@ -145,6 +259,11 @@ func Load() (Config, error) {
 		return Config{}, err
 	}
 
+	kafka, err := loadKafka()
+	if err != nil {
+		return Config{}, err
+	}
+
 	return Config{
 		Database: DatabaseConfig{
 			URL:             databaseURL,
@@ -154,8 +273,90 @@ func Load() (Config, error) {
 			MaxConnIdleTime: maxIdleTime,
 		},
 		Outbox:          outbox,
+		Kafka:           kafka,
 		ShutdownTimeout: shutdownTimeout,
 	}, nil
+}
+
+func loadKafka() (KafkaConfig, error) {
+	brokers := splitList(
+		getStringWithDefault("KAFKA_BROKERS", defaultKafkaBrokers),
+	)
+
+	writeTimeout, err := getDurationWithDefault(
+		"KAFKA_WRITE_TIMEOUT",
+		defaultKafkaWriteTimeout,
+	)
+	if err != nil {
+		return KafkaConfig{}, err
+	}
+
+	maxAttempts, err := getIntWithDefault(
+		"KAFKA_MAX_ATTEMPTS",
+		defaultKafkaMaxAttempts,
+	)
+	if err != nil {
+		return KafkaConfig{}, err
+	}
+
+	batchTimeout, err := getDurationWithDefault(
+		"KAFKA_BATCH_TIMEOUT",
+		defaultKafkaBatchTimeout,
+	)
+	if err != nil {
+		return KafkaConfig{}, err
+	}
+
+	cfg := KafkaConfig{
+		Brokers: brokers,
+		Topic: getStringWithDefault(
+			"KAFKA_TOPIC",
+			defaultKafkaTopic,
+		),
+		ClientID: getStringWithDefault(
+			"KAFKA_CLIENT_ID",
+			defaultKafkaClientID,
+		),
+		WriteTimeout: writeTimeout,
+		MaxAttempts:  maxAttempts,
+		BatchTimeout: batchTimeout,
+	}
+
+	if err := cfg.Validate(); err != nil {
+		return KafkaConfig{}, err
+	}
+
+	return cfg, nil
+}
+
+// splitList parses a comma-separated list, dropping blanks so a trailing
+// comma does not turn into an empty broker address.
+func splitList(value string) []string {
+	parts := strings.Split(value, ",")
+
+	result := make([]string, 0, len(parts))
+
+	for _, part := range parts {
+		part = strings.TrimSpace(part)
+
+		if part == "" {
+			continue
+		}
+
+		result = append(result, part)
+	}
+
+	return result
+}
+
+func getStringWithDefault(key string, fallback string) string {
+	value := strings.TrimSpace(os.Getenv(key))
+
+	if value == "" {
+		return fallback
+	}
+
+	return value
 }
 
 func loadOutbox() (OutboxConfig, error) {
@@ -183,11 +384,68 @@ func loadOutbox() (OutboxConfig, error) {
 		return OutboxConfig{}, err
 	}
 
-	return OutboxConfig{
+	staleTimeout, err := getDurationWithDefault(
+		"OUTBOX_STALE_TIMEOUT",
+		defaultOutboxStaleTimeout,
+	)
+	if err != nil {
+		return OutboxConfig{}, err
+	}
+
+	failureRate, err := getFloatWithDefault(
+		"PUBLISH_FAILURE_RATE",
+		0,
+	)
+	if err != nil {
+		return OutboxConfig{}, err
+	}
+
+	if failureRate < 0 || failureRate >= 1 {
+		return OutboxConfig{}, fmt.Errorf(
+			"PUBLISH_FAILURE_RATE must be in [0, 1)",
+		)
+	}
+
+	cfg := OutboxConfig{
 		Workers:   workers,
 		BatchSize: batchSize,
 		Interval:  interval,
-	}, nil
+		Publisher: getStringWithDefault(
+			"OUTBOX_PUBLISHER",
+			defaultOutboxPublisher,
+		),
+		StaleTimeout:       staleTimeout,
+		PublishFailureRate: failureRate,
+	}
+
+	if err := cfg.Validate(); err != nil {
+		return OutboxConfig{}, err
+	}
+
+	return cfg, nil
+}
+
+func getFloatWithDefault(
+	key string,
+	fallback float64,
+) (float64, error) {
+	value := os.Getenv(key)
+
+	if value == "" {
+		return fallback, nil
+	}
+
+	result, err := strconv.ParseFloat(value, 64)
+
+	if err != nil {
+		return 0, fmt.Errorf(
+			"%s must be a number: %w",
+			key,
+			err,
+		)
+	}
+
+	return result, nil
 }
 
 func getInt32(key string) (int32, error) {
