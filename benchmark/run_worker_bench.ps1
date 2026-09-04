@@ -1,6 +1,5 @@
 <#
 .SYNOPSIS
-    Step 11 - outbox worker concurrency benchmark.
 
 .DESCRIPTION
     Runs ./cmd/outboxbench at 1, 2, 4 and 8 workers with everything else
